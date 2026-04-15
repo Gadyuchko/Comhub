@@ -18,33 +18,38 @@ class JsonKafkaCodecTests {
     @Test
     void serializerAndDeserializerRoundTripCanonicalEvent() {
         CanonicalEvent event = sampleEvent();
-        JsonKafkaSerializer<CanonicalEvent> serializer = new JsonKafkaSerializer<>();
-        JsonKafkaDeserializer<CanonicalEvent> deserializer = new JsonKafkaDeserializer<>(CanonicalEvent.class);
 
-        byte[] bytes = serializer.serialize("canonical.events", event);
-        CanonicalEvent restored = deserializer.deserialize("canonical.events", bytes);
+        try (JsonKafkaSerializer<CanonicalEvent> serializer = new JsonKafkaSerializer<>();
+             JsonKafkaDeserializer<CanonicalEvent> deserializer = new JsonKafkaDeserializer<>(CanonicalEvent.class)) {
+            byte[] bytes = serializer.serialize("canonical.events", event);
+            CanonicalEvent restored = deserializer.deserialize("canonical.events", bytes);
 
-        assertThat(restored).isEqualTo(event);
+            assertThat(restored).isEqualTo(event);
+        }
     }
 
     @Test
     void deserializerCanUseConfiguredTargetType() {
         CanonicalEvent event = sampleEvent();
-        byte[] bytes = new JsonKafkaSerializer<CanonicalEvent>().serialize("canonical.events", event);
-        JsonKafkaDeserializer<CanonicalEvent> deserializer = new JsonKafkaDeserializer<>();
 
-        deserializer.configure(Map.of(JsonKafkaDeserializer.TARGET_TYPE_CONFIG, CanonicalEvent.class), false);
+        try (JsonKafkaSerializer<CanonicalEvent> serializer = new JsonKafkaSerializer<>();
+             JsonKafkaDeserializer<CanonicalEvent> deserializer = new JsonKafkaDeserializer<>()) {
+            byte[] bytes = serializer.serialize("canonical.events", event);
 
-        assertThat(deserializer.deserialize("canonical.events", bytes)).isEqualTo(event);
+            deserializer.configure(Map.of(JsonKafkaDeserializer.TARGET_TYPE_CONFIG, CanonicalEvent.class), false);
+
+            assertThat(deserializer.deserialize("canonical.events", bytes)).isEqualTo(event);
+        }
     }
 
     @Test
     void invalidJsonSurfacesAsSerializationFailure() {
-        JsonKafkaDeserializer<CanonicalEvent> deserializer = new JsonKafkaDeserializer<>(CanonicalEvent.class);
+        try (JsonKafkaDeserializer<CanonicalEvent> deserializer = new JsonKafkaDeserializer<>(CanonicalEvent.class)) {
+            assertThatThrownBy(() -> deserializer.deserialize("canonical.events", "{bad json".getBytes(StandardCharsets.UTF_8)))
+                    .isInstanceOf(SerializationException.class)
+                    .hasMessageContaining("Failed to deserialize JSON");
+        }
 
-        assertThatThrownBy(() -> deserializer.deserialize("canonical.events", "{bad json".getBytes(StandardCharsets.UTF_8)))
-                .isInstanceOf(SerializationException.class)
-                .hasMessageContaining("Failed to deserialize JSON");
     }
 
     private CanonicalEvent sampleEvent() {
