@@ -1,0 +1,14 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: comhub.dlq.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: comhub
+spec:
+  partitions: 12
+  replicas: 3
+  # Dead letter queue: events that failed all 3 retry tiers end up here for human investigation
+  config:
+    # Dead letter queue: longest retention, 7 days for human investigation
+    retention.ms: 604800000

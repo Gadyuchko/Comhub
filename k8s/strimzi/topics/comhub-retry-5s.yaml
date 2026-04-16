@@ -1,0 +1,13 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: comhub.retry.5s
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: comhub
+spec:
+  partitions: 12
+  replicas: 3
+  config:
+    # Short-lived: first retry tier, 1h retention
+    retention.ms: 3600000

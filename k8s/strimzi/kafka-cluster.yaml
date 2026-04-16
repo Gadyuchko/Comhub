@@ -1,0 +1,69 @@
+# KafkaNodePool -- defines the broker/controller nodes
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: kafka-pool
+  namespace: kafka
+  annotations:
+    # assign ids
+  labels:
+    # Links this pool TO the Kafka CR by name (kind-config) really important to link otherwise pool is ignored
+    strimzi.io/cluster: comhub
+spec:
+  replicas: 3
+  roles:
+    - controller
+    - broker
+  storage:
+    type: ephemeral
+#    type: jbod
+#    volumes:
+#      - id: 0
+#        type: persistent-claim
+#        size: 10Gi
+#  resources:
+#    requests:
+#      memory: 1Gi
+#      cpu: "8"
+#    limits:
+#      memory: 3Gi
+#      cpu: "12"
+
+---
+
+# Kafka -- defines the cluster configuration
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  # The cluster name -- must match the label above
+  name: comhub
+  namespace: kafka
+  annotations:
+    # Tells Strimzi to use KafkaNodePool CRs
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    version: "4.2.0"
+    listeners:
+      - name: plain
+        port: 9092
+        # Only reachable inside the K8s cluster
+        type: internal
+        # No encryption - only for local deployment, must change for production
+        tls: false
+    config:
+      # Durability:
+      # new topics get 3 copies by default, every piece of data is replicated between 3 brokers
+      default.replication.factor: 3
+      # Write only succeeds if at least 2 brokers confirm it
+      min.insync.replicas: 2
+      # Kafka's internal system topics replication config for durability,
+      # we set with above replication and write values so data is preserved same way
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+  # Entity operator is a Strimzi sidecar that runs inside the cluster.
+  # The topicOperator: {} part tells it to watch for KafkaTopic CRs and create real Kafka topics from them.
+  entityOperator:
+    topicOperator: {}

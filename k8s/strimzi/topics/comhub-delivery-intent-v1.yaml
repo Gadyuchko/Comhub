@@ -1,0 +1,14 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: comhub.delivery.intent.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: comhub
+spec:
+  # 12 partitions for parallel processing across brokers
+  partitions: 12
+  replicas: 3
+  config:
+    # Events live for 24h, after that Kafka deletes them automatically
+    retention.ms: 86400000

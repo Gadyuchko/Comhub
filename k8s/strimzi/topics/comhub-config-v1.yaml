@@ -1,0 +1,16 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: comhub.config.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: comhub
+spec:
+  partitions: 1
+  replicas: 3
+  config:
+    # Its special topic, and we don't want it deleted; it's configuration storage
+    retention.ms: -1
+    # Normal topics delete old messages after a time limit.
+    # Compacted topics work differently -- Kafka keeps the latest message for each key and deletes older versions.
+    cleanup.policy: compact
