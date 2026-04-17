@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # --- Prerequisite checks ---
-for cmd in docker kind kubectl; do
+for cmd in docker kind kubectl curl sed; do
   if ! command -v "$cmd" &> /dev/null; then
     echo "ERROR: '$cmd' is not installed. Please install it before running this script."
     exit 1

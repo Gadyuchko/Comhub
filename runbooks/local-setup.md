@@ -21,6 +21,10 @@ Install these before running the bootstrap script:
 - **kubectl** -- the Kubernetes CLI. Used to apply manifests and verify cluster state.
   Download: https://kubernetes.io/docs/tasks/tools/
 
+- **curl** -- downloads the pinned Strimzi operator manifest during bootstrap.
+
+- **sed** -- rewrites the Strimzi install manifest namespace to `kafka` during bootstrap.
+
 - **Java 21** -- required for building and running Comhub services (later stories).
   Download: https://adoptium.net/
 
@@ -46,7 +50,7 @@ Install these before running the bootstrap script:
    ```
 
    The script will:
-   - Check that `docker`, `kind`, and `kubectl` are installed
+   - Check that `docker`, `kind`, `kubectl`, `curl`, and `sed` are installed
    - Create a kind cluster named `comhub` (1 control-plane + 3 worker nodes), or reuse it if it already exists
    - Create the `kafka` namespace
    - Install the Strimzi operator (v0.51.0) and wait for it to be ready
