@@ -23,8 +23,11 @@ fi
 kubectl create namespace kafka --dry-run=client -o yaml | kubectl apply -f -
 echo "Namespace for Kafka created"
 
-# --- Strimzi Kafka operator ---
-kubectl apply -f 'https://strimzi.io/install/0.51.0?namespace=kafka' -n kafka
+# --- Strimzi Kafka operator (pinned to 0.51.0, do not use 'latest') ---
+echo "Installing Strimzi operator 0.51.0..."
+curl -sL https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.51.0/strimzi-cluster-operator-0.51.0.yaml \
+  | sed 's/namespace: .*/namespace: kafka/' \
+  | kubectl apply -f - -n kafka
 kubectl wait deployment/strimzi-cluster-operator -n kafka --for=condition=Available --timeout=300s
 
 # --- Apply Kafka cluster CR ---
