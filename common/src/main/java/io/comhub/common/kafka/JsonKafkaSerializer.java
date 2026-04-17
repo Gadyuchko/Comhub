@@ -2,6 +2,7 @@ package io.comhub.common.kafka;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.comhub.common.json.JacksonSupport;
 import org.apache.kafka.common.errors.SerializationException;
 import org.apache.kafka.common.serialization.Serializer;
 
@@ -12,7 +13,7 @@ import org.apache.kafka.common.serialization.Serializer;
  */
 public final class JsonKafkaSerializer<T> implements Serializer<T> {
 
-    private final ObjectMapper objectMapper = JacksonSupport.objectMapper();
+    private final ObjectMapper objectMapper = JacksonSupport.sharedObjectMapper();
 
     @Override
     public byte[] serialize(String topic, T data) {

@@ -1,6 +1,7 @@
 package io.comhub.common.kafka;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.comhub.common.json.JacksonSupport;
 import org.apache.kafka.common.errors.SerializationException;
 import org.apache.kafka.common.serialization.Deserializer;
 
@@ -24,7 +25,7 @@ public final class JsonKafkaDeserializer<T> implements Deserializer<T> {
     }
 
     public JsonKafkaDeserializer(Class<T> targetType) {
-        this.objectMapper = JacksonSupport.objectMapper();
+        this.objectMapper = JacksonSupport.sharedObjectMapper();
         this.targetType = targetType;
     }
 
