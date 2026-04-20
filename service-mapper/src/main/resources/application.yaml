@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: service-mapper
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      auto-offset-reset: earliest
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+
+kafka:
+  group:
+    config-replay: service-mapper-config-${HOSTNAME:local-dev}
+  topics:
+    config-replay: comhub.config.v1
+  config-replay:
+    startup-timeout: 30s
