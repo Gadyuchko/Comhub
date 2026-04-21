@@ -6,6 +6,7 @@ import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 
 import java.time.Duration;
+import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -49,6 +50,26 @@ public final class ConfigReplayCoordinator implements ConsumerSeekAware {
 
         // Clear end offset because this is beginning of assignment
         this.targetOffset = -1L;
+    }
+
+    /**
+     * Initializes replay tracking once the consumer has actual partition ownership. This is needed
+     * for the empty-topic case: no records means {@link #apply(ConsumerRecord, Consumer)} never
+     * fires, so we must snapshot the end offset here and release startup immediately when it is 0.
+     */
+    public void onPartitionsAssigned(Collection<TopicPartition> partitions, Consumer<?, ?> consumer) {
+        if (partitions.isEmpty()) {
+            return;
+        }
+
+        consumer.seekToBeginning(partitions);
+        targetOffset = consumer.endOffsets(Set.copyOf(partitions)).values().stream()
+                .findFirst()
+                .orElse(0L);
+
+        if (targetOffset == 0L) {
+            latch.countDown();
+        }
     }
 
     /**
