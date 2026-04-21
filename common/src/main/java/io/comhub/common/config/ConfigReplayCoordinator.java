@@ -1,13 +1,11 @@
 package io.comhub.common.config;
 
-import org.apache.kafka.common.TopicPartition;
-import org.springframework.kafka.listener.ConsumerSeekAware;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.TopicPartition;
 
 import java.time.Duration;
 import java.util.Collection;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -27,7 +25,7 @@ import java.util.concurrent.TimeUnit;
  *
  * @author Roman Hadiuchko
  */
-public final class ConfigReplayCoordinator implements ConsumerSeekAware {
+public final class ConfigReplayCoordinator {
 
     private final CountDownLatch latch = new CountDownLatch(1);
     private final ConfigCache configCache;

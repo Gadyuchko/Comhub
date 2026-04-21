@@ -1,0 +1,81 @@
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: comhub
+
+---
+
+# Deployment: 1 replica, image ref, env, resources
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  namespace: comhub
+  labels:
+    app: control-plane
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/part-of: comhub
+    app.kubernetes.io/component: service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: control-plane
+  template:
+    metadata:
+      labels:
+        app: control-plane
+    spec:
+      containers:
+      - name: control-plane
+        image: ghcr.io/gadyuchko/comhub-control-plane:0.0.1-SNAPSHOT
+        imagePullPolicy: IfNotPresent
+        ports:
+          - containerPort: 8080
+        env:
+          - name: KAFKA_BOOTSTRAP_SERVERS
+            value: comhub-kafka-bootstrap.kafka:9092
+
+        # 60s grace period
+        startupProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          failureThreshold: 12
+          periodSeconds: 5
+          initialDelaySeconds: 5
+
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8080
+          failureThreshold: 3
+          periodSeconds: 10
+
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          failureThreshold: 3
+          periodSeconds: 5
+
+        resources:
+          requests: { cpu: 100m, memory: 512Mi }
+          limits: { cpu: 500m, memory: 1Gi }
+
+---
+
+# 3) Service: ClusterIP, 8080 → 8080
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane
+  namespace: comhub
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app: control-plane
