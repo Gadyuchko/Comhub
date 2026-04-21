@@ -1,0 +1,33 @@
+spring:
+  application:
+    name: control-plane
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      auto-offset-reset: earliest
+    producer:
+      # we wait until all brokers confirm write to topic because our comhub.config.v1 is single source of truth
+      acks: all
+      properties:
+        # A producer retry (transient broker error, network timeout on first ack) could otherwise produce two records for one logical write.
+        # This setting ensures that only one record is written. The broker deduplicates if it sees the same pair twice on the same partition.
+        enable.idempotence: true
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+
+kafka:
+  group:
+    config-replay: control-plane-config-${HOSTNAME:local-dev}
+  topics:
+    config: comhub.config.v1
+  config-replay:
+    startup-timeout: 30s
+  publisher:
+    timeout: 5s

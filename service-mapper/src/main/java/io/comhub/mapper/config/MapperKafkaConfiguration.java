@@ -2,6 +2,7 @@ package io.comhub.mapper.config;
 
 import io.comhub.common.config.ConfigCache;
 import io.comhub.common.config.ConfigReplayCoordinator;
+import io.comhub.common.config.ConfigReplayRebalanceBridge;
 import io.comhub.common.config.MappingConfig;
 import io.comhub.common.kafka.JsonKafkaDeserializer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -13,7 +14,6 @@ import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
-import org.springframework.kafka.listener.ConsumerAwareRebalanceListener;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -63,14 +63,6 @@ public class MapperKafkaConfiguration {
                 new JsonKafkaDeserializer<>(MappingConfig.class));
     }
 
-    /**
-     * Sets up a factory for the config listener's Kafka consumer.
-     * ConsumerAwareRebalanceListener here wired up to expose live consumer
-     * during rebalance or start up with an empty topic so we get access to offsets.
-     * @param configConsumerFactory
-     * @param configReplayCoordinator
-     * @return
-     */
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, MappingConfig> configKafkaListenerContainerFactory(
             ConsumerFactory<String, MappingConfig> configConsumerFactory,
@@ -79,13 +71,7 @@ public class MapperKafkaConfiguration {
         ConcurrentKafkaListenerContainerFactory<String, MappingConfig> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(configConsumerFactory);
-        factory.getContainerProperties().setConsumerRebalanceListener(new ConsumerAwareRebalanceListener() {
-            @Override
-            public void onPartitionsAssigned(org.apache.kafka.clients.consumer.Consumer<?, ?> consumer,
-                                             java.util.Collection<org.apache.kafka.common.TopicPartition> partitions) {
-                configReplayCoordinator.onPartitionsAssigned(partitions, consumer);
-            }
-        });
+        factory.getContainerProperties().setConsumerRebalanceListener(new ConfigReplayRebalanceBridge(configReplayCoordinator));
         return factory;
     }
 }

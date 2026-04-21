@@ -1,5 +1,7 @@
 package io.comhub.common.config;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -31,5 +33,14 @@ public final class ConfigCache {
 
     public int size() {
         return map.size();
+    }
+
+    /**
+     * Returns an immutable snapshot of the current cache entries. Intended for list-style reads
+     * such as the control-plane's {@code GET /api/source-configs} endpoint. Hot-path consumers
+     * should continue to use {@link #get(String)} so they avoid allocating a snapshot per event.
+     */
+    public Collection<MappingConfig> values() {
+        return List.copyOf(map.values());
     }
 }

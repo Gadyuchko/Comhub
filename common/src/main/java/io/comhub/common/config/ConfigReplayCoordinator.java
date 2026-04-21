@@ -41,17 +41,6 @@ public final class ConfigReplayCoordinator implements ConsumerSeekAware {
         this.configCache = configCache;
     }
 
-    @Override
-    public void onPartitionsAssigned(Map<TopicPartition, Long> assignments, ConsumerSeekCallback callback) {
-
-        // Make consumers start from very beginning of partition, not from current offset
-        assignments.forEach((key, value) -> callback.seekToBeginning(key.topic(), key.partition()));
-
-
-        // Clear end offset because this is beginning of assignment
-        this.targetOffset = -1L;
-    }
-
     /**
      * Initializes replay tracking once the consumer has actual partition ownership. This is needed
      * for the empty-topic case: no records means {@link #apply(ConsumerRecord, Consumer)} never

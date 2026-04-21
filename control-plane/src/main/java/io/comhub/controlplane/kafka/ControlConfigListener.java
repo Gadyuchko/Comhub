@@ -1,11 +1,10 @@
-package io.comhub.mapper.kafka;
+package io.comhub.controlplane.kafka;
 
 import io.comhub.common.config.ConfigReplayCoordinator;
 import io.comhub.common.config.MappingConfig;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.listener.ConsumerSeekAware;
 import org.springframework.stereotype.Component;
@@ -20,11 +19,11 @@ import java.util.Map;
  * @author Roman Hadiuchko
  */
 @Component
-public final class MappingConfigListener {
+public final class ControlConfigListener {
 
     private final ConfigReplayCoordinator configReplayCoordinator;
 
-    public MappingConfigListener(ConfigReplayCoordinator configReplayCoordinator) {
+    public ControlConfigListener(ConfigReplayCoordinator configReplayCoordinator) {
         this.configReplayCoordinator = configReplayCoordinator;
     }
 
