@@ -1,7 +1,18 @@
 package io.comhub.controlplane.web;
 
+import io.comhub.common.config.CanonicalFieldMapping;
+import io.comhub.common.config.CanonicalMapping;
+import io.comhub.common.config.ClassificationRule;
+import io.comhub.common.config.Condition;
+import io.comhub.common.config.ConfigDiscriminator;
 import io.comhub.common.config.MappingConfig;
+import io.comhub.common.config.OperationsConfig;
+import io.comhub.common.config.PromotedAttribute;
+import io.comhub.common.config.RoutingAction;
+import io.comhub.common.config.RoutingRule;
 import io.comhub.controlplane.domain.ConfigPublishException;
+import io.comhub.controlplane.domain.DiscriminatorConflictException;
+import io.comhub.controlplane.domain.InvalidSourceConfigException;
 import io.comhub.controlplane.domain.SourceConfigService;
 import io.comhub.controlplane.web.dto.CreateSourceConfigRequest;
 import io.comhub.controlplane.web.dto.UpdateSourceConfigRequest;
@@ -27,17 +38,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * MVC-layer tests for {@link SourceConfigsController} and {@link GlobalExceptionHandler}.
- *
- * <p>Covers endpoint shape, validation failures rendered as RFC 7807 {@link
- * org.springframework.http.ProblemDetail} responses with field-local error detail, and the
- * {@code 503} response path when the underlying config publish surfaces as {@link
- * ConfigPublishException}. Kafka behavior is covered separately by integration tests so these
- * tests remain fast and focused on the HTTP contract.
- *
- * @author Roman Hadiuchko
- */
 @WebMvcTest(SourceConfigsController.class)
 class SourceConfigsControllerTests {
 
@@ -61,52 +61,37 @@ class SourceConfigsControllerTests {
     @Test
     void getReturnsAllEntriesFromCache() throws Exception {
         given(service.listAll()).willReturn(List.of(
-                new MappingConfig("orders.v1", "Orders", true, 1, List.of(), "ops@example.com"),
-                new MappingConfig("alerts.v1", "Alerts", false, 1, List.of(), "alerts@example.com")));
+                sampleConfig("orders.v1", "order-created"),
+                sampleConfig("alerts.v1", "alert-created")));
 
         mockMvc.perform(get("/api/source-configs"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].sourceTopic").value("orders.v1"))
-                .andExpect(jsonPath("$[1].sourceTopic").value("alerts.v1"))
-                .andExpect(jsonPath("$[1].enabled").value(false));
+                .andExpect(jsonPath("$[0].topic").value("orders.v1"))
+                .andExpect(jsonPath("$[0].sourceEventType").value("order-created"))
+                .andExpect(jsonPath("$[1].topic").value("alerts.v1"));
     }
 
     @Test
     void postCreatesConfigAndReturns201WithResource() throws Exception {
-        MappingConfig persisted = new MappingConfig(
-                "orders.v1", "Orders", true, 1, List.of(), "ops@example.com");
-        given(service.create(any(CreateSourceConfigRequest.class))).willReturn(persisted);
-
-        String body = """
-                {
-                  "sourceTopic": "orders.v1",
-                  "displayName": "Orders",
-                  "enabled": true,
-                  "rules": [],
-                  "emailRecipient": "ops@example.com"
-                }
-                """;
+        given(service.create(any(CreateSourceConfigRequest.class))).willReturn(sampleConfig("orders.v1", "order-created"));
 
         mockMvc.perform(post("/api/source-configs")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
+                        .content(validBody("orders.v1", "order-created")))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.sourceTopic").value("orders.v1"))
-                .andExpect(jsonPath("$.displayName").value("Orders"))
-                .andExpect(jsonPath("$.configSchemaVersion").value(1));
+                .andExpect(jsonPath("$.topic").value("orders.v1"))
+                .andExpect(jsonPath("$.sourceEventType").value("order-created"))
+                .andExpect(jsonPath("$.configSchemaVersion").value(2))
+                .andExpect(jsonPath("$.discriminator.source").value("header"))
+                .andExpect(jsonPath("$.operations.routing[0].actions[0].target").value("ops@example.com"));
     }
 
     @Test
-    void postReturns400ProblemDetailWhenSourceTopicMissing() throws Exception {
-        String body = """
-                {
-                  "displayName": "Orders",
-                  "enabled": true,
-                  "rules": [],
-                  "emailRecipient": "ops@example.com"
-                }
-                """;
+    void postReturns400ProblemDetailWhenTopicMissing() throws Exception {
+        String body = validBody("orders.v1", "order-created").replace("\"topic\": \"orders.v1\",", "");
+        willThrow(new InvalidSourceConfigException(java.util.Map.of("topic", "must not be blank")))
+                .given(service).create(any(CreateSourceConfigRequest.class));
 
         mockMvc.perform(post("/api/source-configs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -114,45 +99,109 @@ class SourceConfigsControllerTests {
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.title").value("Invalid request"))
-                .andExpect(jsonPath("$.status").value(400))
-                .andExpect(jsonPath("$.fieldErrors.sourceTopic").exists());
+                .andExpect(jsonPath("$.fieldErrors.topic").exists());
     }
 
     @Test
-    void postReturns400ProblemDetailWhenEmailRecipientInvalid() throws Exception {
+    void postReturns400ProblemDetailWhenNestedDiscriminatorKeyMissing() throws Exception {
         String body = """
                 {
-                  "sourceTopic": "orders.v1",
-                  "displayName": "Orders",
+                  "topic": "orders.v1",
+                  "sourceEventType": "order-created",
                   "enabled": true,
-                  "rules": [],
-                  "emailRecipient": "not-an-email"
+                  "discriminator": {
+                    "source": "header",
+                    "key": ""
+                  },
+                  "mapping": {
+                    "attributes": []
+                  },
+                  "operations": {
+                    "promotedAttributes": [],
+                    "classification": [],
+                    "routing": []
+                  }
                 }
                 """;
+        willThrow(new InvalidSourceConfigException(java.util.Map.of("discriminator.key", "must not be blank")))
+                .given(service).create(any(CreateSourceConfigRequest.class));
 
         mockMvc.perform(post("/api/source-configs")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.fieldErrors.emailRecipient").exists());
+                .andExpect(jsonPath("$.fieldErrors['discriminator.key']").exists());
     }
 
     @Test
-    void postReturns400ProblemDetailWhenRulesMissing() throws Exception {
+    void postReturns400ProblemDetailWhenDiscriminatorSourceNotHeaderOrPayload() throws Exception {
         String body = """
                 {
-                  "sourceTopic": "orders.v1",
-                  "displayName": "Orders",
+                  "topic": "orders.v1",
+                  "sourceEventType": "order-created",
                   "enabled": true,
-                  "emailRecipient": "ops@example.com"
+                  "discriminator": {
+                    "source": "HEADER",
+                    "key": "eventType"
+                  },
+                  "mapping": {
+                    "attributes": []
+                  },
+                  "operations": {
+                    "promotedAttributes": [],
+                    "classification": [],
+                    "routing": []
+                  }
                 }
                 """;
+        willThrow(new InvalidSourceConfigException(java.util.Map.of(
+                "discriminator.source", "must be either 'header' or 'payload'")))
+                .given(service).create(any(CreateSourceConfigRequest.class));
 
         mockMvc.perform(post("/api/source-configs")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.fieldErrors.rules").exists());
+                .andExpect(jsonPath("$.fieldErrors['discriminator.source']")
+                        .value("must be either 'header' or 'payload'"));
+    }
+
+    @Test
+    void postReturns400ProblemDetailWhenOperationsMissing() throws Exception {
+        String body = """
+                {
+                  "topic": "orders.v1",
+                  "sourceEventType": "order-created",
+                  "enabled": true,
+                  "discriminator": {
+                    "source": "header",
+                    "key": "eventType"
+                  },
+                  "mapping": {
+                    "attributes": []
+                  }
+                }
+                """;
+        willThrow(new InvalidSourceConfigException(java.util.Map.of("operations", "must not be null")))
+                .given(service).create(any(CreateSourceConfigRequest.class));
+
+        mockMvc.perform(post("/api/source-configs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.operations").exists());
+    }
+
+    @Test
+    void postReturns409ProblemDetailWhenDiscriminatorConflicts() throws Exception {
+        willThrow(new DiscriminatorConflictException("Topic 'orders.v1' already uses discriminator header/eventType"))
+                .given(service).create(any(CreateSourceConfigRequest.class));
+
+        mockMvc.perform(post("/api/source-configs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validBody("orders.v1", "order-created")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.title").value("Discriminator conflict"));
     }
 
     @Test
@@ -160,19 +209,9 @@ class SourceConfigsControllerTests {
         willThrow(new ConfigPublishException("publish timed out after 5s", new RuntimeException()))
                 .given(service).create(any(CreateSourceConfigRequest.class));
 
-        String body = """
-                {
-                  "sourceTopic": "orders.v1",
-                  "displayName": "Orders",
-                  "enabled": true,
-                  "rules": [],
-                  "emailRecipient": "ops@example.com"
-                }
-                """;
-
         mockMvc.perform(post("/api/source-configs")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
+                        .content(validBody("orders.v1", "order-created")))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.title").value("Config topic unavailable"))
@@ -181,44 +220,150 @@ class SourceConfigsControllerTests {
 
     @Test
     void putUpdatesConfigAndReturns200WithResource() throws Exception {
-        MappingConfig updated = new MappingConfig(
-                "orders.v1", "Orders v2", false, 1, List.of(), "ops@example.com");
-        given(service.update(eq("orders.v1"), any(UpdateSourceConfigRequest.class)))
-                .willReturn(updated);
+        given(service.update(eq("orders.v1"), eq("order-created"), any(UpdateSourceConfigRequest.class)))
+                .willReturn(sampleConfig("orders.v1", "order-created"));
 
-        String body = """
-                {
-                  "displayName": "Orders v2",
-                  "enabled": false,
-                  "rules": [],
-                  "emailRecipient": "ops@example.com"
-                }
-                """;
-
-        mockMvc.perform(put("/api/source-configs/orders.v1")
+        mockMvc.perform(put("/api/source-configs/orders.v1/order-created")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
+                        .content(validBody("orders.v1", "order-created")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sourceTopic").value("orders.v1"))
-                .andExpect(jsonPath("$.displayName").value("Orders v2"))
-                .andExpect(jsonPath("$.enabled").value(false));
+                .andExpect(jsonPath("$.topic").value("orders.v1"))
+                .andExpect(jsonPath("$.sourceEventType").value("order-created"));
+    }
+
+    @Test
+    void putReturns400WhenPathAndBodyIdentityMismatch() throws Exception {
+        willThrow(new InvalidSourceConfigException(java.util.Map.of(
+                "topic", "must match path topic",
+                "sourceEventType", "must match path sourceEventType")))
+                .given(service).update(eq("orders.v1"), eq("order-created"), any(UpdateSourceConfigRequest.class));
+
+        mockMvc.perform(put("/api/source-configs/orders.v1/order-created")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validBody("orders.v1", "order-updated")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.topic").value("must match path topic"))
+                .andExpect(jsonPath("$.fieldErrors.sourceEventType").value("must match path sourceEventType"));
     }
 
     @Test
     void deleteReturns204AndDelegatesToService() throws Exception {
-        mockMvc.perform(delete("/api/source-configs/orders.v1"))
+        mockMvc.perform(delete("/api/source-configs/orders.v1/order-created"))
                 .andExpect(status().isNoContent());
 
-        verify(service).delete("orders.v1");
+        verify(service).delete("orders.v1", "order-created");
     }
 
     @Test
     void deleteReturns503WhenTombstonePublishFails() throws Exception {
         willThrow(new ConfigPublishException("publish timed out", new RuntimeException()))
-                .given(service).delete("orders.v1");
+                .given(service).delete("orders.v1", "order-created");
 
-        mockMvc.perform(delete("/api/source-configs/orders.v1"))
+        mockMvc.perform(delete("/api/source-configs/orders.v1/order-created"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.status").value(503));
+    }
+
+    private MappingConfig sampleConfig(String topic, String sourceEventType) {
+        return new MappingConfig(
+                topic,
+                sourceEventType,
+                true,
+                2,
+                new ConfigDiscriminator("header", "eventType"),
+                new CanonicalMapping(
+                        new CanonicalFieldMapping("/occurredAt"),
+                        new CanonicalFieldMapping("/severity"),
+                        new CanonicalFieldMapping("/category"),
+                        new CanonicalFieldMapping("/subject"),
+                        new CanonicalFieldMapping("/message"),
+                        List.of()),
+                new OperationsConfig(
+                        List.of(new PromotedAttribute("customerId", "customerId")),
+                        List.of(new ClassificationRule(
+                                "ORDERS",
+                                "order-handler",
+                                List.of(new Condition("severity", "eq", "ERROR")))),
+                        List.of(new RoutingRule(
+                                "primary-email",
+                                List.of(new Condition("classificationCode", "eq", "ORDERS")),
+                                List.of(new RoutingAction("notify", "email", "ops@example.com"))))));
+    }
+
+    private String validBody(String topic, String sourceEventType) {
+        return """
+                {
+                  "topic": "%s",
+                  "sourceEventType": "%s",
+                  "enabled": true,
+                  "discriminator": {
+                    "source": "header",
+                    "key": "eventType"
+                  },
+                  "mapping": {
+                    "occurredAt": {
+                      "source": "/occurredAt"
+                    },
+                    "severity": {
+                      "source": "/severity"
+                    },
+                    "category": {
+                      "source": "/category"
+                    },
+                    "subject": {
+                      "source": "/subject"
+                    },
+                    "message": {
+                      "source": "/message"
+                    },
+                    "attributes": [
+                      {
+                        "targetAttribute": "customerId",
+                        "source": "/customerId"
+                      }
+                    ]
+                  },
+                  "operations": {
+                    "promotedAttributes": [
+                      {
+                        "sourceAttribute": "customerId",
+                        "targetAttribute": "customerId"
+                      }
+                    ],
+                    "classification": [
+                      {
+                        "code": "ORDERS",
+                        "handler": "order-handler",
+                        "conditions": [
+                          {
+                            "attribute": "severity",
+                            "operator": "eq",
+                            "value": "ERROR"
+                          }
+                        ]
+                      }
+                    ],
+                    "routing": [
+                      {
+                        "handler": "primary-email",
+                        "conditions": [
+                          {
+                            "attribute": "classificationCode",
+                            "operator": "eq",
+                            "value": "ORDERS"
+                          }
+                        ],
+                        "actions": [
+                          {
+                            "type": "notify",
+                            "channel": "email",
+                            "target": "ops@example.com"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+                """.formatted(topic, sourceEventType);
     }
 }

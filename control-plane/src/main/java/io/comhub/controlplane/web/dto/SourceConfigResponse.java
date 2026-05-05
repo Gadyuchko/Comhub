@@ -1,9 +1,9 @@
 package io.comhub.controlplane.web.dto;
 
+import io.comhub.common.config.CanonicalMapping;
+import io.comhub.common.config.ConfigDiscriminator;
 import io.comhub.common.config.MappingConfig;
-import io.comhub.common.config.MappingRule;
-
-import java.util.List;
+import io.comhub.common.config.OperationsConfig;
 
 /**
  * HTTP response representation of a {@link MappingConfig} returned from the control-plane's
@@ -13,20 +13,22 @@ import java.util.List;
  * @author Roman Hadiuchko
  */
 public record SourceConfigResponse(
-        String sourceTopic,
-        String displayName,
+        String topic,
+        String sourceEventType,
         boolean enabled,
         int configSchemaVersion,
-        List<MappingRule> rules,
-        String emailRecipient) {
+        ConfigDiscriminator discriminator,
+        CanonicalMapping mapping,
+        OperationsConfig operations) {
 
     public static SourceConfigResponse from(MappingConfig config) {
         return new SourceConfigResponse(
-                config.sourceTopic(),
-                config.displayName(),
+                config.topic(),
+                config.sourceEventType(),
                 config.enabled(),
                 config.configSchemaVersion(),
-                config.rules(),
-                config.emailRecipient());
+                config.discriminator(),
+                config.mapping(),
+                config.operations());
     }
 }

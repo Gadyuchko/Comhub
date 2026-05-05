@@ -1,33 +1,37 @@
 package io.comhub.controlplane.kafka;
 
-import io.comhub.common.config.ConfigCache;
+import io.comhub.common.config.ConfigKey;
+import io.comhub.common.config.MappingConfig;
+import io.comhub.common.kafka.JsonKafkaDeserializer;
 import io.comhub.controlplane.web.dto.SourceConfigResponse;
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.test.context.EmbeddedKafka;
+import org.springframework.kafka.test.utils.KafkaTestUtils;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
+import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
-/**
- * End-to-end verification that the control-plane HTTP path publishes mutations to
- * {@code comhub.config.v1}, its own listener observes the records, and the local {@link
- * ConfigCache} transitions accordingly. Uses an embedded Kafka broker so the published records
- * travel through real Kafka infrastructure rather than a mocked wire.
- *
- * @author Roman Hadiuchko
- */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @EmbeddedKafka(partitions = 1, topics = ControlPlaneKafkaIntegrationTests.CONFIG_TOPIC)
 @TestPropertySource(properties = {
@@ -46,37 +50,41 @@ class ControlPlaneKafkaIntegrationTests {
     int port;
 
     @Autowired
-    ConfigCache cache;
+    io.comhub.common.config.ConfigCache cache;
+
+    @Autowired
+    org.springframework.kafka.test.EmbeddedKafkaBroker broker;
 
     RestTemplate restTemplate = new RestTemplate();
+    Consumer<String, MappingConfig> auditConsumer;
+
+    @AfterEach
+    void tearDown() {
+        if (auditConsumer != null) {
+            auditConsumer.close();
+        }
+    }
 
     @Test
-    void postPublishesToConfigTopicAndListenerMaterializesCacheEntry() {
-        String body = """
-                {
-                  "sourceTopic": "orders.v1",
-                  "displayName": "Orders",
-                  "enabled": true,
-                  "rules": [],
-                  "emailRecipient": "ops@example.com"
-                }
-                """;
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
+    void postPublishesCompositeKeyAndListenerMaterializesCacheEntry() {
         ResponseEntity<SourceConfigResponse> response = restTemplate.postForEntity(
                 url("/api/source-configs"),
-                new HttpEntity<>(body, headers),
+                new HttpEntity<>(validBody("orders.v1", "order-created"), jsonHeaders()),
                 SourceConfigResponse.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().sourceTopic()).isEqualTo("orders.v1");
+        assertThat(response.getBody().topic()).isEqualTo("orders.v1");
+        assertThat(response.getBody().sourceEventType()).isEqualTo("order-created");
 
-        // Listener must observe the published record and materialize it into the local cache.
+        ConfigKey key = new ConfigKey("orders.v1", "order-created");
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(cache.get("orders.v1")).isNotNull());
+                assertThat(cache.get(key)).isNotNull());
+
+        ConsumerRecord<String, MappingConfig> record = kafkaRecord();
+        assertThat(record.key()).isEqualTo(key.asRecordKey());
+        assertThat(record.value().topic()).isEqualTo("orders.v1");
+        assertThat(record.value().sourceEventType()).isEqualTo("order-created");
 
         ResponseEntity<SourceConfigResponse[]> getResponse = restTemplate.getForEntity(
                 url("/api/source-configs"),
@@ -84,44 +92,107 @@ class ControlPlaneKafkaIntegrationTests {
 
         assertThat(getResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(getResponse.getBody())
-                .extracting(SourceConfigResponse::sourceTopic)
+                .extracting(SourceConfigResponse::topic)
                 .contains("orders.v1");
     }
 
     @Test
-    void deletePublishesTombstoneAndListenerRemovesEntryFromCache() {
-        String body = """
-                {
-                  "sourceTopic": "alerts.v1",
-                  "displayName": "Alerts",
-                  "enabled": true,
-                  "rules": [],
-                  "emailRecipient": "alerts@example.com"
-                }
-                """;
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
+    void twoPeerConfigsRoundTripAndDeletingOnePublishesPeerPreservingTombstone() {
         restTemplate.postForEntity(
                 url("/api/source-configs"),
-                new HttpEntity<>(body, headers),
+                new HttpEntity<>(validBody("orders.v1", "order-created"), jsonHeaders()),
+                SourceConfigResponse.class);
+        restTemplate.postForEntity(
+                url("/api/source-configs"),
+                new HttpEntity<>(validBody("orders.v1", "order-cancelled"), jsonHeaders()),
                 SourceConfigResponse.class);
 
-        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(cache.get("alerts.v1")).isNotNull());
+        ConfigKey created = new ConfigKey("orders.v1", "order-created");
+        ConfigKey cancelled = new ConfigKey("orders.v1", "order-cancelled");
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+            assertThat(cache.get(created)).isNotNull();
+            assertThat(cache.get(cancelled)).isNotNull();
+        });
 
-        restTemplate.delete(url("/api/source-configs/alerts.v1"));
+        ResponseEntity<Void> deleteResponse = restTemplate.exchange(
+                url("/api/source-configs/orders.v1/order-cancelled"),
+                HttpMethod.DELETE,
+                null,
+                Void.class);
 
-        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(cache.get("alerts.v1")).isNull());
+        assertThat(deleteResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+            assertThat(cache.get(created)).isNotNull();
+            assertThat(cache.get(cancelled)).isNull();
+        });
 
         ResponseEntity<SourceConfigResponse[]> getResponse = restTemplate.getForEntity(
                 url("/api/source-configs"),
                 SourceConfigResponse[].class);
 
         assertThat(getResponse.getBody())
-                .extracting(SourceConfigResponse::sourceTopic)
-                .doesNotContain("alerts.v1");
+                .extracting(SourceConfigResponse::sourceEventType)
+                .contains("order-created")
+                .doesNotContain("order-cancelled");
+    }
+
+    private ConsumerRecord<String, MappingConfig> kafkaRecord() {
+        if (auditConsumer == null) {
+            Map<String, Object> props = KafkaTestUtils.consumerProps(
+                    "audit-" + UUID.randomUUID(), "false", broker);
+            props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+            auditConsumer = new DefaultKafkaConsumerFactory<>(
+                    props,
+                    new StringDeserializer(),
+                    new JsonKafkaDeserializer<>(MappingConfig.class))
+                    .createConsumer();
+            broker.consumeFromAnEmbeddedTopic(auditConsumer, CONFIG_TOPIC);
+        }
+        return KafkaTestUtils.getSingleRecord(auditConsumer, CONFIG_TOPIC, Duration.ofSeconds(10));
+    }
+
+    private HttpHeaders jsonHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return headers;
+    }
+
+    private String validBody(String topic, String sourceEventType) {
+        return """
+                {
+                  "topic": "%s",
+                  "sourceEventType": "%s",
+                  "enabled": true,
+                  "discriminator": {
+                    "source": "header",
+                    "key": "eventType"
+                  },
+                  "mapping": {
+                    "occurredAt": {
+                      "source": "/occurredAt"
+                    },
+                    "severity": {
+                      "source": "/severity"
+                    },
+                    "category": {
+                      "source": "/category"
+                    },
+                    "subject": {
+                      "source": "/subject"
+                    },
+                    "message": {
+                      "source": "/message"
+                    },
+                    "attributes": []
+                  },
+                  "operations": {
+                    "promotedAttributes": [],
+                    "classification": [],
+                    "routing": []
+                  }
+                }
+                """.formatted(topic, sourceEventType);
     }
 
     private String url(String path) {

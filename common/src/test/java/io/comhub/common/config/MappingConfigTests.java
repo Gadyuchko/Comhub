@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.comhub.common.json.JacksonSupport;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -16,14 +15,7 @@ class MappingConfigTests {
 
     @Test
     void jacksonRoundTripPreservesAllFields() throws Exception {
-        MappingConfig original = new MappingConfig(
-                "source.alerts",
-                "Alerts source",
-                true,
-                2,
-                List.of(new MappingRule()),
-                "ops@example.com"
-        );
+        MappingConfig original = sampleConfig();
 
         String json = objectMapper.writeValueAsString(original);
         MappingConfig restored = objectMapper.readValue(json, MappingConfig.class);
@@ -35,8 +27,7 @@ class MappingConfigTests {
     void emptyJsonAppliesCompactConstructorDefaults() throws Exception {
         MappingConfig restored = objectMapper.readValue("{}", MappingConfig.class);
 
-        assertThat(restored.configSchemaVersion()).isEqualTo(1);
-        assertThat(restored.rules()).isEmpty();
+        assertThat(restored.configSchemaVersion()).isEqualTo(2);
     }
 
     @Test
@@ -48,20 +39,59 @@ class MappingConfigTests {
     }
 
     @Test
-    void nullRulesArgumentBecomesEmptyList() {
+    void nullNestedCollectionsBecomeImmutableEmptyCollections() {
         MappingConfig config = new MappingConfig(
-                "source.alerts", "Alerts", true, 1, null, "ops@example.com");
+                "source.alerts",
+                "alert.created",
+                true,
+                0,
+                new ConfigDiscriminator("header", "eventType"),
+                new CanonicalMapping(null, null, null, null, null, null),
+                new OperationsConfig(null, null, null));
 
-        assertThat(config.rules()).isEmpty();
+        assertThat(config.mapping().attributes()).isEmpty();
+        assertThat(config.operations().promotedAttributes()).isEmpty();
+        assertThat(config.operations().classification()).isEmpty();
+        assertThat(config.operations().routing()).isEmpty();
     }
 
     @Test
-    void rulesListIsImmutableAfterConstruction() {
-        List<MappingRule> source = new ArrayList<>(List.of(new MappingRule()));
-        MappingConfig config = new MappingConfig(
-                "source.alerts", "Alerts", true, 1, source, "ops@example.com");
+    void nestedCollectionsAreImmutableAfterConstruction() {
+        MappingConfig config = sampleConfig();
 
-        assertThatThrownBy(() -> config.rules().add(new MappingRule()))
+        assertThatThrownBy(() -> config.mapping().attributes().add(new AttributeMapping("team", "/team")))
                 .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> config.operations().promotedAttributes().add(new PromotedAttribute("team", "team")))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> config.operations().classification().getFirst().conditions().add(new Condition("a", "eq", "b")))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> config.operations().routing().getFirst().actions().add(new RoutingAction("notify", "email", "x@example.com")))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    private MappingConfig sampleConfig() {
+        return new MappingConfig(
+                "source.alerts",
+                "alert.created",
+                true,
+                2,
+                new ConfigDiscriminator("header", "eventType"),
+                new CanonicalMapping(
+                        new CanonicalFieldMapping("/occurredAt"),
+                        new CanonicalFieldMapping("/severity"),
+                        new CanonicalFieldMapping("/category"),
+                        new CanonicalFieldMapping("/subject"),
+                        new CanonicalFieldMapping("/message"),
+                        List.of(new AttributeMapping("host", "/host"))),
+                new OperationsConfig(
+                        List.of(new PromotedAttribute("host", "host")),
+                        List.of(new ClassificationRule(
+                                "OPS",
+                                "ops-default",
+                                List.of(new Condition("severity", "eq", "CRITICAL")))),
+                        List.of(new RoutingRule(
+                                "primary-email",
+                                List.of(new Condition("classificationCode", "eq", "OPS")),
+                                List.of(new RoutingAction("notify", "email", "ops@example.com"))))));
     }
 }

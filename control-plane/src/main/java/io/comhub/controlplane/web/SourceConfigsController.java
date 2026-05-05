@@ -51,16 +51,18 @@ public class SourceConfigsController {
         return SourceConfigResponse.from(created);
     }
 
-    @PutMapping("/{id}")
-    public SourceConfigResponse update(@PathVariable("id") String id,
+    @PutMapping("/{topic}/{sourceEventType}")
+    public SourceConfigResponse update(@PathVariable("topic") String topic,
+                                       @PathVariable("sourceEventType") String sourceEventType,
                                        @Valid @RequestBody UpdateSourceConfigRequest request) {
-        MappingConfig updated = service.update(id, request);
+        MappingConfig updated = service.update(topic, sourceEventType, request);
         return SourceConfigResponse.from(updated);
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable("id") String id) {
-        service.delete(id);
+    @DeleteMapping("/{topic}/{sourceEventType}")
+    public ResponseEntity<Void> delete(@PathVariable("topic") String topic,
+                                       @PathVariable("sourceEventType") String sourceEventType) {
+        service.delete(topic, sourceEventType);
         return ResponseEntity.noContent().build();
     }
 }

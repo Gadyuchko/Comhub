@@ -1,6 +1,8 @@
 package io.comhub.controlplane.web;
 
 import io.comhub.controlplane.domain.ConfigPublishException;
+import io.comhub.controlplane.domain.DiscriminatorConflictException;
+import io.comhub.controlplane.domain.InvalidSourceConfigException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -48,6 +50,25 @@ public class GlobalExceptionHandler {
                 HttpStatus.BAD_REQUEST,
                 "Request body could not be parsed");
         problem.setTitle("Malformed request");
+        return problem;
+    }
+
+    @ExceptionHandler(InvalidSourceConfigException.class)
+    public ProblemDetail handleInvalidSourceConfig(InvalidSourceConfigException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST,
+                "Request validation failed");
+        problem.setTitle("Invalid request");
+        problem.setProperty("fieldErrors", ex.getFieldErrors());
+        return problem;
+    }
+
+    @ExceptionHandler(DiscriminatorConflictException.class)
+    public ProblemDetail handleDiscriminatorConflict(DiscriminatorConflictException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT,
+                ex.getMessage());
+        problem.setTitle("Discriminator conflict");
         return problem;
     }
 

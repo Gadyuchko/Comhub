@@ -1,25 +1,22 @@
 package io.comhub.controlplane.web.dto;
 
-import io.comhub.common.config.MappingRule;
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.Email;
+import io.comhub.common.config.CanonicalMapping;
+import io.comhub.common.config.ConfigDiscriminator;
+import io.comhub.common.config.OperationsConfig;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
-import java.util.List;
-
 /**
- * Request body for {@code POST /api/source-configs}. Carries the full source configuration
- * payload including {@code sourceTopic}, which is treated as the MVP resource identifier and
- * becomes the Kafka message key on publish to {@code comhub.config.v1}.
+ * Request body for {@code POST /api/source-configs}.
  *
  * @author Roman Hadiuchko
  */
 public record CreateSourceConfigRequest(
-        @NotBlank String sourceTopic,
-        @NotBlank String displayName,
+        @NotBlank String topic,
+        @NotBlank String sourceEventType,
         @NotNull Boolean enabled,
         Integer configSchemaVersion,
-        @NotNull @Valid List<MappingRule> rules,
-        @NotBlank @Email String emailRecipient) {
+        @NotNull ConfigDiscriminator discriminator,
+        @NotNull CanonicalMapping mapping,
+        @NotNull OperationsConfig operations) {
 }

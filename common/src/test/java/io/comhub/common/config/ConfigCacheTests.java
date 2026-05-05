@@ -12,47 +12,61 @@ class ConfigCacheTests {
 
     @Test
     void getReturnsNullForUnknownKey() {
-        assertThat(cache.get("source.unknown")).isNull();
+        assertThat(cache.get(new ConfigKey("source.unknown", "event"))).isNull();
     }
 
     @Test
     void putThenGetReturnsStoredInstance() {
-        MappingConfig config = sampleConfig("source.alerts");
+        ConfigKey key = new ConfigKey("source.alerts", "alert.created");
+        MappingConfig config = sampleConfig("source.alerts", "alert.created");
 
-        cache.put("source.alerts", config);
+        cache.put(key, config);
 
-        assertThat(cache.get("source.alerts")).isSameAs(config);
+        assertThat(cache.get(key)).isSameAs(config);
     }
 
     @Test
     void removeDeletesEntry() {
-        cache.put("source.alerts", sampleConfig("source.alerts"));
+        ConfigKey key = new ConfigKey("source.alerts", "alert.created");
+        cache.put(key, sampleConfig("source.alerts", "alert.created"));
 
-        cache.remove("source.alerts");
+        cache.remove(key);
 
-        assertThat(cache.get("source.alerts")).isNull();
+        assertThat(cache.get(key)).isNull();
     }
 
     @Test
     void sizeReflectsEntryCount() {
         assertThat(cache.size()).isZero();
 
-        cache.put("a", sampleConfig("a"));
-        cache.put("b", sampleConfig("b"));
+        cache.put(new ConfigKey("a", "one"), sampleConfig("a", "one"));
+        cache.put(new ConfigKey("b", "two"), sampleConfig("b", "two"));
         assertThat(cache.size()).isEqualTo(2);
 
-        cache.remove("a");
+        cache.remove(new ConfigKey("a", "one"));
         assertThat(cache.size()).isEqualTo(1);
     }
 
-    private MappingConfig sampleConfig(String sourceTopic) {
+    @Test
+    void configsForTopicReturnsOnlyPeerConfigs() {
+        cache.put(new ConfigKey("orders.v1", "order-created"), sampleConfig("orders.v1", "order-created"));
+        cache.put(new ConfigKey("orders.v1", "order-cancelled"), sampleConfig("orders.v1", "order-cancelled"));
+        cache.put(new ConfigKey("alerts.v1", "alert-created"), sampleConfig("alerts.v1", "alert-created"));
+
+        assertThat(cache.configsForTopic("orders.v1"))
+                .extracting(MappingConfig::sourceEventType)
+                .containsExactlyInAnyOrder("order-created", "order-cancelled");
+    }
+
+    private MappingConfig sampleConfig(String topic, String sourceEventType) {
         return new MappingConfig(
-                sourceTopic,
-                "Display " + sourceTopic,
+                topic,
+                sourceEventType,
                 true,
-                1,
-                List.of(),
-                "ops@example.com"
+                2,
+                new ConfigDiscriminator("header", "eventType"),
+                new CanonicalMapping(null, null, null, null, null, List.of()),
+                new OperationsConfig(List.of(), List.of(), List.of())
         );
     }
 }

@@ -1,6 +1,6 @@
 package io.comhub.controlplane.kafka;
 
-import io.comhub.common.config.ConfigCache;
+import io.comhub.common.config.ConfigKey;
 import io.comhub.common.config.MappingConfig;
 import io.comhub.controlplane.domain.ConfigPublishException;
 import org.junit.jupiter.api.Test;
@@ -22,17 +22,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.willThrow;
 
-/**
- * Verifies that when the config-topic publish path fails, the control-plane HTTP surface
- * returns {@code 503 Service Unavailable} and the local {@link ConfigCache} is left untouched.
- *
- * <p>The publisher bean is replaced with a Mockito stub that throws {@link
- * ConfigPublishException} unconditionally. The embedded Kafka broker is still started so the
- * Spring context, listener, and startup orchestrator boot normally; only the outbound publish
- * path is broken.
- *
- * @author Roman Hadiuchko
- */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @EmbeddedKafka(partitions = 1, topics = ControlPlanePublishFailureIntegrationTests.CONFIG_TOPIC)
 @TestPropertySource(properties = {
@@ -51,7 +40,7 @@ class ControlPlanePublishFailureIntegrationTests {
     int port;
 
     @Autowired
-    ConfigCache cache;
+    io.comhub.common.config.ConfigCache cache;
 
     @MockitoBean
     ConfigTopicPublisher publisher;
@@ -74,21 +63,9 @@ class ControlPlanePublishFailureIntegrationTests {
 
         int sizeBefore = cache.size();
 
-        String body = """
-                {
-                  "sourceTopic": "orders.v1",
-                  "displayName": "Orders",
-                  "enabled": true,
-                  "rules": [],
-                  "emailRecipient": "ops@example.com"
-                }
-                """;
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
         ResponseEntity<String> response = restTemplate.postForEntity(
                 "http://localhost:" + port + "/api/source-configs",
-                new HttpEntity<>(body, headers),
+                new HttpEntity<>(validBody("orders.v1", "order-created"), jsonHeaders()),
                 String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
@@ -98,23 +75,66 @@ class ControlPlanePublishFailureIntegrationTests {
         assertThat(response.getBody()).contains("Config topic unavailable");
 
         assertThat(cache.size()).isEqualTo(sizeBefore);
-        assertThat(cache.get("orders.v1")).isNull();
+        assertThat(cache.get(new ConfigKey("orders.v1", "order-created"))).isNull();
     }
 
     @Test
     void deleteReturns503AndCacheIsUnchangedWhenTombstonePublishFails() {
         willThrow(new ConfigPublishException("simulated broker failure", new RuntimeException()))
-                .given(publisher).publishTombstone("orders.v1");
+                .given(publisher).publishTombstone(new ConfigKey("orders.v1", "order-created"));
 
         int sizeBefore = cache.size();
 
         ResponseEntity<String> response = restTemplate.exchange(
-                "http://localhost:" + port + "/api/source-configs/orders.v1",
+                "http://localhost:" + port + "/api/source-configs/orders.v1/order-created",
                 org.springframework.http.HttpMethod.DELETE,
                 null,
                 String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
         assertThat(cache.size()).isEqualTo(sizeBefore);
+    }
+
+    private HttpHeaders jsonHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return headers;
+    }
+
+    private String validBody(String topic, String sourceEventType) {
+        return """
+                {
+                  "topic": "%s",
+                  "sourceEventType": "%s",
+                  "enabled": true,
+                  "discriminator": {
+                    "source": "header",
+                    "key": "eventType"
+                  },
+                  "mapping": {
+                    "occurredAt": {
+                      "source": "/occurredAt"
+                    },
+                    "severity": {
+                      "source": "/severity"
+                    },
+                    "category": {
+                      "source": "/category"
+                    },
+                    "subject": {
+                      "source": "/subject"
+                    },
+                    "message": {
+                      "source": "/message"
+                    },
+                    "attributes": []
+                  },
+                  "operations": {
+                    "promotedAttributes": [],
+                    "classification": [],
+                    "routing": []
+                  }
+                }
+                """.formatted(topic, sourceEventType);
     }
 }

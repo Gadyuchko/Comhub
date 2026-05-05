@@ -1,7 +1,11 @@
 package io.comhub.mapper;
 
+import io.comhub.common.config.CanonicalMapping;
 import io.comhub.common.config.ConfigCache;
+import io.comhub.common.config.ConfigDiscriminator;
+import io.comhub.common.config.ConfigKey;
 import io.comhub.common.config.MappingConfig;
+import io.comhub.common.config.OperationsConfig;
 import io.comhub.common.kafka.JsonKafkaSerializer;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -26,19 +30,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Verifies that the mapper service correctly materializes {@code comhub.config.v1}
- * into {@link ConfigCache} at startup and honors tombstone semantics during replay.
- *
- * <p>Boots an embedded Kafka broker, seeds the config topic with a mix of upserts
- * and a tombstone <em>before</em> starting the Spring context, then asserts the
- * post-startup cache contents. This is the only way to observe replay end-of-topic
- * behavior: once the Spring context has started, the coordinator's latch has
- * already released, so the cache state at that moment is exactly what replay
- * produced.
- *
- * @author Roman Hadiuchko
- */
 class MapperConfigReplayIntegrationTests {
 
     private static final String CONFIG_TOPIC = "comhub.config.v1";
@@ -53,16 +44,18 @@ class MapperConfigReplayIntegrationTests {
         broker = new EmbeddedKafkaKraftBroker(1, 1, CONFIG_TOPIC);
         broker.afterPropertiesSet();
 
-        MappingConfig m1 = new MappingConfig("source.one",   "Source One",   true, 1, List.of(), "one@example.com");
-        MappingConfig m2 = new MappingConfig("source.two",   "Source Two",   true, 1, List.of(), "two@example.com");
-        MappingConfig m3 = new MappingConfig("source.three", "Source Three", true, 1, List.of(), "three@example.com");
+        MappingConfig orderCreated = sampleConfig("orders.v1", "order-created", "header", "eventType");
+        MappingConfig orderCancelled = sampleConfig("orders.v1", "order-cancelled", "header", "eventType");
+        MappingConfig conflictingPeer = sampleConfig("orders.v1", "order-returned", "payload", "/type");
+        MappingConfig alertCreated = sampleConfig("alerts.v1", "alert-created", "header", "eventType");
 
         try (Producer<String, MappingConfig> producer = createProducer(broker.getBrokersAsString())) {
-            producer.send(new ProducerRecord<>(CONFIG_TOPIC, "m1", m1)).get();
-            producer.send(new ProducerRecord<>(CONFIG_TOPIC, "m2", m2)).get();
-            producer.send(new ProducerRecord<>(CONFIG_TOPIC, "m3", m3)).get();
-            // Tombstone for m3 — replay should observe this and remove the entry.
-            producer.send(new ProducerRecord<>(CONFIG_TOPIC, "m3", null)).get();
+            producer.send(new ProducerRecord<>(CONFIG_TOPIC, new ConfigKey("orders.v1", "order-created").asRecordKey(), orderCreated)).get();
+            producer.send(new ProducerRecord<>(CONFIG_TOPIC, new ConfigKey("orders.v1", "order-cancelled").asRecordKey(), orderCancelled)).get();
+            producer.send(new ProducerRecord<>(CONFIG_TOPIC, new ConfigKey("orders.v1", "order-cancelled").asRecordKey(), null)).get();
+            producer.send(new ProducerRecord<>(CONFIG_TOPIC, "malformed-key", alertCreated)).get();
+            producer.send(new ProducerRecord<>(CONFIG_TOPIC, new ConfigKey("orders.v1", "order-returned").asRecordKey(), conflictingPeer)).get();
+            producer.send(new ProducerRecord<>(CONFIG_TOPIC, new ConfigKey("alerts.v1", "alert-created").asRecordKey(), alertCreated)).get();
             producer.flush();
         }
 
@@ -91,21 +84,21 @@ class MapperConfigReplayIntegrationTests {
     }
 
     @Test
-    void replayLoadsNonTombstonedMappings() {
-        assertThat(cache.get("m1")).isNotNull();
-        assertThat(cache.get("m1").sourceTopic()).isEqualTo("source.one");
-
-        assertThat(cache.get("m2")).isNotNull();
-        assertThat(cache.get("m2").sourceTopic()).isEqualTo("source.two");
+    void replayLoadsValidMappingsIntoCompositeKeyCache() {
+        assertThat(cache.get(new ConfigKey("orders.v1", "order-created"))).isNotNull();
+        assertThat(cache.get(new ConfigKey("orders.v1", "order-created")).topic()).isEqualTo("orders.v1");
+        assertThat(cache.get(new ConfigKey("alerts.v1", "alert-created"))).isNotNull();
     }
 
     @Test
-    void tombstoneDuringReplayRemovesEntry() {
-        assertThat(cache.get("m3")).isNull();
+    void tombstoneDuringReplayRemovesOnlyThatPeerConfig() {
+        assertThat(cache.get(new ConfigKey("orders.v1", "order-cancelled"))).isNull();
+        assertThat(cache.get(new ConfigKey("orders.v1", "order-created"))).isNotNull();
     }
 
     @Test
-    void cacheSizeMatchesPostReplayState() {
+    void replaySkipsMalformedAndDiscriminatorConflictingRecords() {
+        assertThat(cache.get(new ConfigKey("orders.v1", "order-returned"))).isNull();
         assertThat(cache.size()).isEqualTo(2);
     }
 
@@ -115,8 +108,19 @@ class MapperConfigReplayIntegrationTests {
                 .tag("service", "service-mapper")
                 .gauge();
 
-        assertThat(gauge).as("gauge registered").isNotNull();
+        assertThat(gauge).isNotNull();
         assertThat(gauge.value()).isEqualTo(2.0);
+    }
+
+    private static MappingConfig sampleConfig(String topic, String sourceEventType, String discriminatorSource, String discriminatorKey) {
+        return new MappingConfig(
+                topic,
+                sourceEventType,
+                true,
+                2,
+                new ConfigDiscriminator(discriminatorSource, discriminatorKey),
+                new CanonicalMapping(null, null, null, null, null, List.of()),
+                new OperationsConfig(List.of(), List.of(), List.of()));
     }
 
     private static Producer<String, MappingConfig> createProducer(String brokers) {

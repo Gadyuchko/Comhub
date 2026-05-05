@@ -3,6 +3,8 @@ package io.comhub.common.config;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.Collection;
@@ -26,6 +28,8 @@ import java.util.concurrent.TimeUnit;
  * @author Roman Hadiuchko
  */
 public final class ConfigReplayCoordinator {
+
+    private static final Logger log = LoggerFactory.getLogger(ConfigReplayCoordinator.class);
 
     private final CountDownLatch latch = new CountDownLatch(1);
     private final ConfigCache configCache;
@@ -66,17 +70,45 @@ public final class ConfigReplayCoordinator {
      *
      */
     public void apply(ConsumerRecord<String, MappingConfig> record, Consumer<?, ?> consumer) {
+        ConfigKey key = ConfigKey.parse(record.key());
+        if (key == null) {
+            log.warn("Skipping config record with malformed composite key '{}'", record.key());
+            countDownAtReplayEnd(record, consumer);
+            return;
+        }
 
         // Always: keep the cache in sync on every record, forever.
         // Apply tombstone-or-put. This is the one place in the system where
         // the rule "value == null means remove" is implemented.
         if (record.value() == null) {
-            configCache.remove(record.key());
+            configCache.remove(key);
         } else {
-            configCache.put(record.key(), record.value());
+            if (hasDiscriminatorConflict(key, record.value())) {
+                log.warn("Skipping config record for topic '{}' and sourceEventType '{}' due to discriminator conflict",
+                        key.topic(), key.sourceEventType());
+                countDownAtReplayEnd(record, consumer);
+                return;
+            }
+
+            configCache.put(key, record.value());
         }
 
-        // Replay only: Next block is done only during replay on start up or reassignment of partitions
+        countDownAtReplayEnd(record, consumer);
+    }
+
+    // Whichever record materializes first wins; subsequent conflicting peers on the same
+    // topic are skipped until the cache is rebuilt. Across different post-compaction states
+    // of the config topic the "winner" can change, since compaction reorders which record
+    // survives at a given key. The control plane is expected to keep peer discriminators
+    // consistent at write time; this check is the listener's last line of defense.
+    private boolean hasDiscriminatorConflict(ConfigKey key, MappingConfig config) {
+        return configCache.configsForTopic(key.topic()).stream()
+                .map(MappingConfig::discriminator)
+                .filter(discriminator -> discriminator != null)
+                .anyMatch(discriminator -> !discriminator.equals(config.discriminator()));
+    }
+
+    private void countDownAtReplayEnd(ConsumerRecord<String, MappingConfig> record, Consumer<?, ?> consumer) {
         if (latch.getCount() == 0) {
             return;
         }
@@ -90,7 +122,6 @@ public final class ConfigReplayCoordinator {
         if (record.offset() + 1 >= targetOffset) {
             latch.countDown();
         }
-
     }
 
     /**

@@ -1,5 +1,6 @@
 package io.comhub.controlplane.kafka;
 
+import io.comhub.common.config.ConfigKey;
 import io.comhub.common.config.MappingConfig;
 import io.comhub.controlplane.domain.ConfigPublishException;
 import org.slf4j.Logger;
@@ -50,37 +51,39 @@ public class ConfigTopicPublisherImpl implements ConfigTopicPublisher {
 
     @Override
     public void publish(MappingConfig config) {
-        String sourceTopic = config.sourceTopic();
+        ConfigKey key = new ConfigKey(config.topic(), config.sourceEventType());
+        String recordKey = key.asRecordKey();
         try {
-            kafkaTemplate.send(configTopic, sourceTopic, config)
+            kafkaTemplate.send(configTopic, recordKey, config)
                     .get(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            log.debug("Published config update for source {}", sourceTopic);
+            log.debug("Published config update for {}", recordKey);
         } catch (TimeoutException ex) {
-            throw new ConfigPublishException("Config publish timed out after " + timeout + " for source " + sourceTopic, ex);
+            throw new ConfigPublishException("Config publish timed out after " + timeout + " for key " + recordKey, ex);
         } catch (ExecutionException ex) {
-            throw new ConfigPublishException("Config publish failed for source " + sourceTopic, ex.getCause());
+            throw new ConfigPublishException("Config publish failed for key " + recordKey, ex.getCause());
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            throw new ConfigPublishException("Config publish was interrupted for source " + sourceTopic, ex);
+            throw new ConfigPublishException("Config publish was interrupted for key " + recordKey, ex);
         }
     }
 
     @Override
-    public void publishTombstone(String sourceTopic) {
+    public void publishTombstone(ConfigKey key) {
+        String recordKey = key.asRecordKey();
         try {
-            kafkaTemplate.send(configTopic, sourceTopic, null)
+            kafkaTemplate.send(configTopic, recordKey, null)
                     .get(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            log.debug("Published config tombstone for source {}", sourceTopic);
+            log.debug("Published config tombstone for {}", recordKey);
         } catch (TimeoutException ex) {
             throw new ConfigPublishException(
-                    "Config tombstone publish timed out after " + timeout + " for source " + sourceTopic, ex);
+                    "Config tombstone publish timed out after " + timeout + " for key " + recordKey, ex);
         } catch (ExecutionException ex) {
             throw new ConfigPublishException(
-                    "Config tombstone publish failed for source " + sourceTopic, ex.getCause());
+                    "Config tombstone publish failed for key " + recordKey, ex.getCause());
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             throw new ConfigPublishException(
-                    "Config tombstone publish was interrupted for source " + sourceTopic, ex);
+                    "Config tombstone publish was interrupted for key " + recordKey, ex);
         }
     }
 }
