@@ -5,7 +5,7 @@ import { cn } from "../../lib/utils";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   asChild?: boolean;
-  variant?: "default" | "primary";
+  variant?: "default" | "primary" | "ghost" | "outline";
   icon?: ReactNode;
 };
 
@@ -13,7 +13,16 @@ export function Button({ asChild, className, variant = "default", icon, children
   const Component = asChild ? Slot : "button";
 
   return (
-    <Component className={cn("button", variant === "primary" && "primary", className)} {...props}>
+    <Component
+      className={cn(
+        "button",
+        variant === "primary" && "primary",
+        variant === "ghost" && "ghost",
+        variant === "outline" && "outline",
+        className
+      )}
+      {...props}
+    >
       {icon}
       {children}
     </Component>

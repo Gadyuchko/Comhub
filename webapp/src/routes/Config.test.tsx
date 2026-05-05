@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import App from "../App";
@@ -13,7 +13,7 @@ describe("Config route", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders empty copy, loading state, and Source Basics editor", async () => {
+  it("renders empty copy, loading state, and Source identity editor", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(Response.json([]))));
 
     renderApp(<App />, { route: "/config" });
@@ -53,10 +53,10 @@ describe("Config route", () => {
     renderApp(<App />, { route: "/config" });
 
     await screen.findByRole("button", { name: /payment_failure/i });
-    await userEvent.click(screen.getByRole("button", { name: "New Source" }));
+    await userEvent.click(screen.getByRole("button", { name: "New" }));
     await userEvent.type(screen.getByLabelText("Topic"), "orders.events.v1");
     await userEvent.click(screen.getByRole("button", { name: /payment_failure/i }));
-    await userEvent.click(screen.getByRole("button", { name: "New Source" }));
+    await userEvent.click(screen.getByRole("button", { name: "New" }));
 
     expect(screen.getByDisplayValue("orders.events.v1")).toBeInTheDocument();
   });
@@ -67,7 +67,7 @@ describe("Config route", () => {
     renderApp(<App />, { route: "/config" });
 
     await screen.findByText(emptyCopy);
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
 
     expect(screen.getByText("Topic is required.")).toBeInTheDocument();
     expect(screen.getByText("Source event type is required.")).toBeInTheDocument();
@@ -88,12 +88,12 @@ describe("Config route", () => {
     await userEvent.type(screen.getByLabelText("Source event type"), "order_created");
     await userEvent.type(screen.getByLabelText("Discriminator key"), "eventType");
     await userEvent.click(screen.getByRole("switch", { name: "Enabled" }));
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
 
     expect(screen.getByText(/Enabled source configs require occurredAt, severity, and category mappings/i)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("switch", { name: "Enabled" }));
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/source-configs", expect.objectContaining({ method: "POST" })));
   });
@@ -109,7 +109,7 @@ describe("Config route", () => {
     renderApp(<App />, { route: "/config" });
 
     await screen.findByDisplayValue("payment/failure");
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -137,7 +137,7 @@ describe("Config route", () => {
     await userEvent.type(screen.getByLabelText("Topic"), "orders.events.v1");
     await userEvent.type(screen.getByLabelText("Source event type"), "order_created");
     await userEvent.type(screen.getByLabelText("Discriminator key"), "eventType");
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Discriminator conflict");
     expect(screen.getByText(problem.detail)).toBeInTheDocument();
@@ -149,21 +149,27 @@ describe("Config route", () => {
     renderApp(<App />, { route: "/config" });
 
     const headings = await screen.findAllByRole("heading", { level: 2 });
-    expect(headings.map((heading) => heading.textContent)).toEqual([
+    expect(headings.map((heading) => heading.textContent?.trim())).toEqual([
       "Sources",
-      "Source Basics",
-      "Canonical Mapping",
-      "Promoted Attributes",
-      "Classification",
-      "Routing",
+      "Source identity",
+      "Sample drop",
+      "Canonical mapping",
+      "Promoted attributes",
       "Validation & Save",
-      "Sample Drop",
+      "Sample payload",
       "Dry-run trace"
     ]);
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs[0]).toHaveTextContent(/Classification/);
+    expect(tabs[1]).toHaveTextContent(/Routing/);
+
     expect(screen.queryByRole("heading", { name: "Delivery Settings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Responses" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("System metadata")).toHaveTextContent("rawPayload");
-    expect(screen.getByText("Operational severity used by classification, routing, and dashboards.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Drives alert priority and internal urgency handling. One of INFO, WARNING, ERROR, CRITICAL.")
+    ).toBeInTheDocument();
   });
 
   it("keeps Sample Drop local, offers JSON Pointer paths, and previews selected values", async () => {
@@ -183,7 +189,7 @@ describe("Config route", () => {
     expect(screen.getByText("WARN")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "eventType" })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/source-configs/"), expect.any(Object)));
     const body = JSON.parse(String(fetchMock.mock.calls[1][1].body));
@@ -220,15 +226,15 @@ describe("Config route", () => {
     await userEvent.type(screen.getByLabelText("classification condition value 1.1"), "CRITICAL");
     expect(screen.getByText("when 1 condition AND")).toBeInTheDocument();
 
+    await userEvent.click(screen.getByRole("tab", { name: /Routing/ }));
     await userEvent.click(screen.getByRole("button", { name: "Add routing rule" }));
     await userEvent.type(screen.getByLabelText("Route name 1"), "primary-email");
     await userEvent.type(screen.getByLabelText("routing condition attribute 1.1"), "classificationCode");
     await userEvent.selectOptions(screen.getByLabelText("routing condition operator 1.1"), "eq");
     await userEvent.type(screen.getByLabelText("routing condition value 1.1"), "BILLING");
     await userEvent.type(screen.getAllByLabelText("Target email 1")[0], "ops@example.com");
-    expect(screen.getByLabelText("Default route name")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
 
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2));
     const [url, init] = fetchMock.mock.calls.find((call) => call[1]?.method === "PUT")!;
@@ -260,14 +266,39 @@ describe("Config route", () => {
     await userEvent.type(screen.getByLabelText("severity source path"), "severity");
     expect(screen.getByText("Use a JSON Pointer like /severity.")).toBeInTheDocument();
 
+    await userEvent.click(screen.getByRole("tab", { name: /Routing/ }));
     await userEvent.click(screen.getByRole("button", { name: "Add routing rule" }));
     await userEvent.type(screen.getByLabelText("Route name 1"), "bad-email");
     await userEvent.type(screen.getAllByLabelText("Target email 1")[0], "not-email");
-    await userEvent.click(screen.getByRole("button", { name: "Save and Enable" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save & enable" }));
 
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Use a valid email target.")).toBeInTheDocument();
     expect(screen.getByText("Fix highlighted fields before enabling.")).toBeInTheDocument();
+  });
+
+  it("renders the pipeline telemetry strip with four cells", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(Response.json([]))));
+
+    renderApp(<App />, { route: "/config" });
+
+    const strip = await screen.findByRole("group", { name: "Pipeline telemetry" });
+    ["lag", "thru", "retry", "dlq"].forEach((label) => {
+      expect(within(strip).getByText(label)).toBeInTheDocument();
+    });
+  });
+
+  it("shows save-blocked status pill when severity and category are missing on an editable draft", async () => {
+    const config = {
+      ...sampleConfig(),
+      mapping: { ...sampleConfig().mapping, severity: undefined, category: undefined }
+    };
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(Response.json([config]))));
+
+    renderApp(<App />, { route: "/config" });
+
+    await screen.findByDisplayValue("payment_failure");
+    expect(screen.getByText(/severity \+ category unmapped · save blocked/i)).toBeInTheDocument();
   });
 });
 
