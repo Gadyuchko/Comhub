@@ -2,3 +2,11 @@
 
 # Maven build output for every module.
 target/
+
+# Frontend dependencies and generated outputs.
+webapp/node_modules/
+webapp/dist/
+webapp/coverage/
+webapp/.vite/
+webapp/node_modules/.tmp/
+webapp/*.tsbuildinfo

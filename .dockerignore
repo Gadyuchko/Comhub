@@ -1,0 +1,13 @@
+**/target/
+!control-plane/target/
+!control-plane/target/*.jar
+
+webapp/node_modules/
+webapp/dist/
+webapp/coverage/
+webapp/.vite/
+webapp/node_modules/.tmp/
+
+.git/
+.idea/
+*.iml
