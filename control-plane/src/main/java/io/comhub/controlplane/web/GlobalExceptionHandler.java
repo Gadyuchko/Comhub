@@ -1,7 +1,6 @@
 package io.comhub.controlplane.web;
 
 import io.comhub.controlplane.domain.ConfigPublishException;
-import io.comhub.controlplane.domain.DiscriminatorConflictException;
 import io.comhub.controlplane.domain.InvalidSourceConfigException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,15 +59,6 @@ public class GlobalExceptionHandler {
                 "Request validation failed");
         problem.setTitle("Invalid request");
         problem.setProperty("fieldErrors", ex.getFieldErrors());
-        return problem;
-    }
-
-    @ExceptionHandler(DiscriminatorConflictException.class)
-    public ProblemDetail handleDiscriminatorConflict(DiscriminatorConflictException ex) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.CONFLICT,
-                ex.getMessage());
-        problem.setTitle("Discriminator conflict");
         return problem;
     }
 

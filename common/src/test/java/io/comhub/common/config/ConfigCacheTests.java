@@ -64,7 +64,7 @@ class ConfigCacheTests {
                 sourceEventType,
                 true,
                 2,
-                new ConfigDiscriminator("header", "eventType"),
+                new ConfigDiscriminator(DiscriminatorSource.HEADER, "eventType"),
                 new CanonicalMapping(null, null, null, null, null, List.of()),
                 new OperationsConfig(List.of(), List.of(), List.of())
         );

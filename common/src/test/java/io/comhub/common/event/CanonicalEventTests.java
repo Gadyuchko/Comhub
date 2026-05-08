@@ -38,7 +38,10 @@ class CanonicalEventTests {
         assertThat(EventHeaders.SOURCE_TOPIC).isEqualTo("comhub.source.topic");
         assertThat(EventHeaders.SOURCE_PARTITION).isEqualTo("comhub.source.partition");
         assertThat(EventHeaders.SOURCE_OFFSET).isEqualTo("comhub.source.offset");
+        assertThat(EventHeaders.SOURCE_EVENT_TYPE).isEqualTo("comhub.source.event.type");
         assertThat(EventHeaders.ATTEMPT_COUNT).isEqualTo("comhub.attempt.count");
+        assertThat(EventHeaders.FAILURE_STAGE).isEqualTo("comhub.failure.stage");
+        assertThat(EventHeaders.FAILURE_REASON).isEqualTo("comhub.failure.reason");
         assertThat(EventHeaders.TRACEPARENT).isEqualTo("traceparent");
     }
 

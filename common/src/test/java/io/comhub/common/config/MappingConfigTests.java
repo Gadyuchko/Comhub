@@ -45,7 +45,7 @@ class MappingConfigTests {
                 "alert.created",
                 true,
                 0,
-                new ConfigDiscriminator("header", "eventType"),
+                new ConfigDiscriminator(DiscriminatorSource.HEADER, "eventType"),
                 new CanonicalMapping(null, null, null, null, null, null),
                 new OperationsConfig(null, null, null));
 
@@ -75,7 +75,7 @@ class MappingConfigTests {
                 "alert.created",
                 true,
                 2,
-                new ConfigDiscriminator("header", "eventType"),
+                new ConfigDiscriminator(DiscriminatorSource.HEADER, "eventType"),
                 new CanonicalMapping(
                         new CanonicalFieldMapping("/occurredAt"),
                         new CanonicalFieldMapping("/severity"),

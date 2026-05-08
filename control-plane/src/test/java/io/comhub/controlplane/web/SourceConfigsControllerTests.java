@@ -5,13 +5,13 @@ import io.comhub.common.config.CanonicalMapping;
 import io.comhub.common.config.ClassificationRule;
 import io.comhub.common.config.Condition;
 import io.comhub.common.config.ConfigDiscriminator;
+import io.comhub.common.config.DiscriminatorSource;
 import io.comhub.common.config.MappingConfig;
 import io.comhub.common.config.OperationsConfig;
 import io.comhub.common.config.PromotedAttribute;
 import io.comhub.common.config.RoutingAction;
 import io.comhub.common.config.RoutingRule;
 import io.comhub.controlplane.domain.ConfigPublishException;
-import io.comhub.controlplane.domain.DiscriminatorConflictException;
 import io.comhub.controlplane.domain.InvalidSourceConfigException;
 import io.comhub.controlplane.domain.SourceConfigService;
 import io.comhub.controlplane.web.dto.CreateSourceConfigRequest;
@@ -134,14 +134,14 @@ class SourceConfigsControllerTests {
     }
 
     @Test
-    void postReturns400ProblemDetailWhenDiscriminatorSourceNotHeaderOrPayload() throws Exception {
+    void postReturns400ProblemDetailWhenDiscriminatorSourceUnknown() throws Exception {
         String body = """
                 {
                   "topic": "orders.v1",
                   "sourceEventType": "order-created",
                   "enabled": true,
                   "discriminator": {
-                    "source": "HEADER",
+                    "source": "unknown",
                     "key": "eventType"
                   },
                   "mapping": {
@@ -154,16 +154,11 @@ class SourceConfigsControllerTests {
                   }
                 }
                 """;
-        willThrow(new InvalidSourceConfigException(java.util.Map.of(
-                "discriminator.source", "must be either 'header' or 'payload'")))
-                .given(service).create(any(CreateSourceConfigRequest.class));
-
         mockMvc.perform(post("/api/source-configs")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.fieldErrors['discriminator.source']")
-                        .value("must be either 'header' or 'payload'"));
+                .andExpect(jsonPath("$.title").value("Malformed request"));
     }
 
     @Test
@@ -190,18 +185,6 @@ class SourceConfigsControllerTests {
                         .content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.fieldErrors.operations").exists());
-    }
-
-    @Test
-    void postReturns409ProblemDetailWhenDiscriminatorConflicts() throws Exception {
-        willThrow(new DiscriminatorConflictException("Topic 'orders.v1' already uses discriminator header/eventType"))
-                .given(service).create(any(CreateSourceConfigRequest.class));
-
-        mockMvc.perform(post("/api/source-configs")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(validBody("orders.v1", "order-created")))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.title").value("Discriminator conflict"));
     }
 
     @Test
@@ -270,7 +253,7 @@ class SourceConfigsControllerTests {
                 sourceEventType,
                 true,
                 2,
-                new ConfigDiscriminator("header", "eventType"),
+                new ConfigDiscriminator(DiscriminatorSource.HEADER, "eventType"),
                 new CanonicalMapping(
                         new CanonicalFieldMapping("/occurredAt"),
                         new CanonicalFieldMapping("/severity"),

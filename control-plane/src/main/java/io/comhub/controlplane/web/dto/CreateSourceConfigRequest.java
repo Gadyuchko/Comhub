@@ -13,7 +13,7 @@ import jakarta.validation.constraints.NotNull;
  */
 public record CreateSourceConfigRequest(
         @NotBlank String topic,
-        @NotBlank String sourceEventType,
+        String sourceEventType,
         @NotNull Boolean enabled,
         Integer configSchemaVersion,
         @NotNull ConfigDiscriminator discriminator,

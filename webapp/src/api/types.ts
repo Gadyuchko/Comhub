@@ -1,4 +1,4 @@
-export type DiscriminatorSource = "header" | "payload";
+export type DiscriminatorSource = "header" | "payload" | "topic";
 
 export type ConfigDiscriminator = {
   source: DiscriminatorSource;

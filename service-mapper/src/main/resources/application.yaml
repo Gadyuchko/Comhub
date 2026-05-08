@@ -17,5 +17,10 @@ kafka:
     config-replay: service-mapper-config-${HOSTNAME:local-dev}
   topics:
     config-replay: comhub.config.v1
+    canonical: comhub.canonical.v1
+    dlq: comhub.dlq.v1
+  source:
+    consumer:
+      group-prefix: comhub.mapper
   config-replay:
     startup-timeout: 30s

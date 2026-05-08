@@ -83,29 +83,10 @@ public final class ConfigReplayCoordinator {
         if (record.value() == null) {
             configCache.remove(key);
         } else {
-            if (hasDiscriminatorConflict(key, record.value())) {
-                log.warn("Skipping config record for topic '{}' and sourceEventType '{}' due to discriminator conflict",
-                        key.topic(), key.sourceEventType());
-                countDownAtReplayEnd(record, consumer);
-                return;
-            }
-
             configCache.put(key, record.value());
         }
 
         countDownAtReplayEnd(record, consumer);
-    }
-
-    // Whichever record materializes first wins; subsequent conflicting peers on the same
-    // topic are skipped until the cache is rebuilt. Across different post-compaction states
-    // of the config topic the "winner" can change, since compaction reorders which record
-    // survives at a given key. The control plane is expected to keep peer discriminators
-    // consistent at write time; this check is the listener's last line of defense.
-    private boolean hasDiscriminatorConflict(ConfigKey key, MappingConfig config) {
-        return configCache.configsForTopic(key.topic()).stream()
-                .map(MappingConfig::discriminator)
-                .filter(discriminator -> discriminator != null)
-                .anyMatch(discriminator -> !discriminator.equals(config.discriminator()));
     }
 
     private void countDownAtReplayEnd(ConsumerRecord<String, MappingConfig> record, Consumer<?, ?> consumer) {

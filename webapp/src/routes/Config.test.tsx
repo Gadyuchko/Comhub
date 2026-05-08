@@ -119,16 +119,16 @@ describe("Config route", () => {
     );
   });
 
-  it("renders 409 ProblemDetail discriminator conflict as an inline page banner", async () => {
+  it("renders ProblemDetail as an inline page banner", async () => {
     const problem = {
-      title: "Discriminator conflict",
-      status: 409,
-      detail: "Topic 'orders.events.v1' already uses discriminator header/eventType"
+      title: "Config topic unavailable",
+      status: 503,
+      detail: "Configuration change could not be published to the config topic; local state is unchanged."
     };
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(Response.json([]))
-      .mockResolvedValueOnce(Response.json(problem, { status: 409 }));
+      .mockResolvedValueOnce(Response.json(problem, { status: 503 }));
     vi.stubGlobal("fetch", fetchMock);
 
     renderApp(<App />, { route: "/config" });
@@ -139,7 +139,7 @@ describe("Config route", () => {
     await userEvent.type(screen.getByLabelText("Discriminator key"), "eventType");
     await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Discriminator conflict");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Config topic unavailable");
     expect(screen.getByText(problem.detail)).toBeInTheDocument();
   });
 

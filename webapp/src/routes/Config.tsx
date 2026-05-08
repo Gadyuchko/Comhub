@@ -592,7 +592,24 @@ function SourceIdentitySection({
   errors: FieldErrors;
   onChange: (draft: Draft) => void;
 }) {
-  const updateDiscriminator = (discriminator: ConfigDiscriminator) => onChange({ ...draft, discriminator });
+  const isTopicDiscriminator = draft.discriminator.source === "topic";
+  const updateDiscriminator = (discriminator: ConfigDiscriminator) => {
+    onChange({
+      ...draft,
+      sourceEventType: discriminator.source === "topic" ? draft.topic : draft.sourceEventType,
+      discriminator: {
+        ...discriminator,
+        key: discriminator.source === "topic" ? "" : discriminator.key
+      }
+    });
+  };
+  const updateTopic = (topic: string) => {
+    onChange({
+      ...draft,
+      topic,
+      sourceEventType: isTopicDiscriminator ? topic : draft.sourceEventType
+    });
+  };
 
   return (
     <section aria-labelledby="source-identity-heading">
@@ -609,13 +626,14 @@ function SourceIdentitySection({
             <input
               className="input mono"
               value={draft.topic}
-              onChange={(event) => onChange({ ...draft, topic: event.target.value })}
+              onChange={(event) => updateTopic(event.target.value)}
             />
           </Field>
           <Field label="Source event type" error={errors.sourceEventType} dense>
             <input
               className="input mono"
               value={draft.sourceEventType}
+              disabled={isTopicDiscriminator}
               onChange={(event) => onChange({ ...draft, sourceEventType: event.target.value })}
             />
           </Field>
@@ -632,12 +650,14 @@ function SourceIdentitySection({
             >
               <option value="header">header</option>
               <option value="payload">payload</option>
+              <option value="topic">topic</option>
             </select>
           </Field>
           <Field label="Discriminator key" error={errors["discriminator.key"]} dense>
             <input
               className="input mono"
               value={draft.discriminator.key}
+              disabled={isTopicDiscriminator}
               onChange={(event) => updateDiscriminator({ ...draft.discriminator, key: event.target.value })}
             />
           </Field>
@@ -659,8 +679,7 @@ function SourceIdentitySection({
         <div className="identity-warning">
           <AlertTriangle size={14} className="identity-warning-icon" aria-hidden="true" />
           <span>
-            All configs on <code>{draft.topic || "this topic"}</code> must use the same discriminator. A mismatch returns{" "}
-            <strong>409 conflict</strong>.
+            Header and payload configs use topic + source event type. Topic configs use the topic as the source event type.
           </span>
         </div>
       </div>
@@ -1747,11 +1766,11 @@ function validateDraft(draft: Draft): FieldErrors {
     errors.topic = "Topic is required.";
   }
 
-  if (!draft.sourceEventType.trim()) {
+  if (draft.discriminator.source !== "topic" && !draft.sourceEventType.trim()) {
     errors.sourceEventType = "Source event type is required.";
   }
 
-  if (!draft.discriminator.key.trim()) {
+  if (draft.discriminator.source !== "topic" && !draft.discriminator.key.trim()) {
     errors["discriminator.key"] = "Discriminator key is required.";
   }
 
@@ -1807,7 +1826,7 @@ function validateEnable(config: Draft) {
     reasons.push("Enabled source configs require occurredAt, severity, and category mappings before they can be enabled.");
   }
 
-  if (!config.discriminator.source || !config.discriminator.key.trim()) {
+  if (!config.discriminator.source || (config.discriminator.source !== "topic" && !config.discriminator.key.trim())) {
     reasons.push("Save and Enable requires discriminator source and key.");
   }
 
@@ -1820,8 +1839,15 @@ function validateEnable(config: Draft) {
 }
 
 function normalizeDraft(draft: Draft): Draft {
+  const isTopicDiscriminator = draft.discriminator.source === "topic";
+
   return {
     ...draft,
+    sourceEventType: isTopicDiscriminator ? draft.topic : draft.sourceEventType,
+    discriminator: {
+      ...draft.discriminator,
+      key: isTopicDiscriminator ? "" : draft.discriminator.key
+    },
     configSchemaVersion: 2,
     mapping: {
       ...draft.mapping,

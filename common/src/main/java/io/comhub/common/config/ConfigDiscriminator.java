@@ -1,11 +1,11 @@
 package io.comhub.common.config;
 
 /**
- * Declares how a source event type is identified inside a shared source topic, it can come from either header or the event payload.
+ * Declares where mapper should look to understand which config can process a source event.
  *
  * @author Roman Hadiuchko
  */
 public record ConfigDiscriminator(
-        String source,
+        DiscriminatorSource source,
         String key) {
 }

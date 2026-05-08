@@ -13,6 +13,9 @@ public final class EventHeaders {
     public static final String SOURCE_OFFSET = "comhub.source.offset";
     public static final String ATTEMPT_COUNT = "comhub.attempt.count";
     public static final String TRACEPARENT = "traceparent";
+    public static final String SOURCE_EVENT_TYPE = "comhub.source.event.type";
+    public static final String FAILURE_STAGE = "comhub.failure.stage";
+    public static final String FAILURE_REASON = "comhub.failure.reason";
 
     private EventHeaders() {
         throw new UnsupportedOperationException("EventHeaders contains constants only");
