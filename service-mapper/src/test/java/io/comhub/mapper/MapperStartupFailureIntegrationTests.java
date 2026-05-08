@@ -9,14 +9,11 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Verifies that when the config topic cannot be consumed at startup, the
- * service fails fast rather than continuing with an empty cache.
+ * If mapper cannot read config topic on startup, it should stop.
  *
- * <p>Matches the Kafka-unavailable acceptance criterion: no snapshot fallback,
- * failure surfaced through normal Spring Boot startup with a visible exception.
- * Achieves the unreachable-broker condition by pointing the listener at a port
- * on localhost where nothing listens, combined with a tight startup timeout so
- * the test finishes in seconds rather than blocking on TCP retries.
+ * <p>Otherwise we would start with an empty cache and source events would be handled
+ * with no real mapping rules. This test points Kafka to a local port where nothing
+ * listens and uses a short timeout, so we can prove startup fails quickly.
  *
  * @author Roman Hadiuchko
  */
