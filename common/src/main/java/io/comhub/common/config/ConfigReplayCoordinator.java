@@ -8,22 +8,28 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.Collection;
+import java.util.Objects;
 import java.util.Set;
+
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Gates service startup on full replay of {@code comhub.config.v1}.
+ * Reads {@code comhub.config.v1} into the local cache and gates service startup
+ * on the topic being fully replayed.
  *
- * <p>Scoped specifically to {@code comhub.config.v1}, which is a
- * single-partition compacted broadcast topic by explicit architectural
- * decision. The coordinator's scalar state reflects that assumption:
- * if the topic ever grows to multiple partitions, this class must be
- * redesigned rather than patched.
+ * <p>Built for one specific topic: {@code comhub.config.v1} has one partition by
+ * design, so this class assumes one partition only. If the topic ever gets more
+ * partitions, this class needs to be redesigned, not patched.
  *
- * <p>Single-writer invariant: {@code targetOffset} is written and read
- * only on the config consumer listener container's poll thread. The latch is the one
- * deliberate cross-thread boundary, designed for exactly that use.
+ * <p>{@code targetOffset} is written and read on the config consumer's poll thread
+ * only. The latch is the one cross-thread handoff: anyone can wait on it, only
+ * the poll thread releases it.
+ *
+ * <p>Every record is checked before the cache is touched. If the record breaks one
+ * of the discriminator rules (see {@link #validate}), it is logged at WARN and
+ * skipped. Control-plane checks the same rules at HTTP write time, so this is
+ * mostly a safety net for anything that bypasses control-plane.
  *
  * @author Roman Hadiuchko
  */
@@ -34,9 +40,8 @@ public final class ConfigReplayCoordinator {
     private final CountDownLatch latch = new CountDownLatch(1);
     private final ConfigCache configCache;
 
-    // End-offset snapshot for the single tracked partition.
-    // We only write it from one thread, but use of volatile just in case if a future reader ever queries it from another
-    // thread (e.g. a diagnostics), they see the latest write.
+    // We only write this from the consumer poll thread, but volatile lets a
+    // diagnostics reader on another thread see the latest value.
     private volatile long targetOffset = -1L;
 
     public ConfigReplayCoordinator(ConfigCache configCache) {
@@ -44,9 +49,9 @@ public final class ConfigReplayCoordinator {
     }
 
     /**
-     * Initializes replay tracking once the consumer has actual partition ownership. This is needed
-     * for the empty-topic case: no records means {@link #apply(ConsumerRecord, Consumer)} never
-     * fires, so we must snapshot the end offset here and release startup immediately when it is 0.
+     * Snapshots the topic's end offset when the consumer first owns the partition.
+     * Needed for the empty-topic case: with no records, {@link #apply} never fires,
+     * so we have to release the latch here when the end offset is 0.
      */
     public void onPartitionsAssigned(Collection<TopicPartition> partitions, Consumer<?, ?> consumer) {
         if (partitions.isEmpty()) {
@@ -64,10 +69,9 @@ public final class ConfigReplayCoordinator {
     }
 
     /**
-     * Called from the @KafkaListener method of config topic consumer, once per record for topic partition.
-     * This method does 2 things: on replay tracks offset and releases latch so worker listeners can start consuming,
-     * and updates config cache live, post replay
-     *
+     * Called once per record from the config-topic listener. Validates, then either
+     * adds to the cache, removes from the cache (on tombstone), or skips (on rejection).
+     * Releases the replay latch when the last replay record has been processed.
      */
     public void apply(ConsumerRecord<String, MappingConfig> record, Consumer<?, ?> consumer) {
         ConfigKey key = ConfigKey.parse(record.key());
@@ -77,16 +81,61 @@ public final class ConfigReplayCoordinator {
             return;
         }
 
-        // Always: keep the cache in sync on every record, forever.
-        // Apply tombstone-or-put. This is the one place in the system where
-        // the rule "value == null means remove" is implemented.
         if (record.value() == null) {
             configCache.remove(key);
         } else {
-            configCache.put(key, record.value());
+            String rejection = validate(key, record.value());
+            if (rejection != null) {
+                log.warn("Skipping config record key={} reason={}", key.asRecordKey(), rejection);
+            } else {
+                configCache.put(key, record.value());
+            }
         }
 
         countDownAtReplayEnd(record, consumer);
+    }
+
+    /**
+     * Checks the record before we add it to the cache. Returns {@code null} when it's
+     * fine, otherwise a short reason string used in the warn-log.
+     *
+     * <p>Two checks:
+     * <ul>
+     *   <li>The discriminator itself: source must be set; for {@code TOPIC} the key must
+     *       be blank and {@code sourceEventType} must equal the topic name; for {@code HEADER}
+     *       and {@code PAYLOAD} the key must be non-blank.</li>
+     *   <li>All configs on the same topic must use the same discriminator (same source AND
+     *       same key). The entry being updated is skipped, so a topic that only has one
+     *       config can change its own discriminator freely.</li>
+     * </ul>
+     */
+    private String validate(ConfigKey key, MappingConfig incoming) {
+        ConfigDiscriminator discriminator = incoming.discriminator();
+        if (discriminator == null || discriminator.source() == null) {
+            return "discriminator_missing";
+        }
+
+        if (discriminator.source() == DiscriminatorSource.TOPIC) {
+            if (discriminator.key() != null && !discriminator.key().isBlank()) {
+                return "topic_discriminator_invalid_key";
+            }
+            if (!key.topic().equals(key.sourceEventType())) {
+                return "topic_discriminator_invalid_type";
+            }
+        } else if (discriminator.key() == null || discriminator.key().isBlank()) {
+            return "discriminator_key_missing";
+        }
+
+        for (MappingConfig existing : configCache.configsForTopic(key.topic())) {
+            if (existing.sourceEventType().equals(key.sourceEventType())) {
+                continue;
+            }
+            if (!Objects.equals(existing.discriminator(), discriminator)) {
+                return "discriminator_mismatch_on_topic";
+            }
+        }
+
+        return null;
     }
 
     private void countDownAtReplayEnd(ConsumerRecord<String, MappingConfig> record, Consumer<?, ?> consumer) {
@@ -94,7 +143,7 @@ public final class ConfigReplayCoordinator {
             return;
         }
 
-        // set target offset for single partition
+        // Set the target offset for the single partition the first time we see a record.
         if (targetOffset < 0) {
             TopicPartition tp = new TopicPartition(record.topic(), record.partition());
             targetOffset = consumer.endOffsets(Set.of(tp)).get(tp);
@@ -106,10 +155,9 @@ public final class ConfigReplayCoordinator {
     }
 
     /**
-     * Blocks the calling thread until end-of-replay or the timeout elapses.
-     * Returns {@code true} if replay completed in time, {@code false} otherwise.
-     * On {@code false} the caller must refuse to start source-topic listeners
-     * and let startup fail visibly.
+     * Blocks until replay finishes or the timeout passes. Returns {@code true} on
+     * success. The caller should refuse to start work-topic listeners and let
+     * startup fail visibly when this returns {@code false}.
      */
     public boolean awaitEndOfReplay(Duration timeout) throws InterruptedException {
         return latch.await(timeout.toMillis(), TimeUnit.MILLISECONDS);

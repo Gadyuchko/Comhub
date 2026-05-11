@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Orchestrates source-configuration reads and mutations for the control-plane HTTP API.
@@ -47,6 +48,8 @@ public class SourceConfigService {
         Map<String, String> fieldErrors = new LinkedHashMap<>();
         collectDiscriminatorErrors(request.discriminator(), fieldErrors);
         collectSourceEventTypeErrors(request.sourceEventType(), request.discriminator(), fieldErrors);
+        String effectiveSourceEventType = effectiveSourceEventType(request.topic(), request.sourceEventType(), request.discriminator());
+        collectTopicDiscriminatorConflictErrors(request.topic(), effectiveSourceEventType, request.discriminator(), fieldErrors);
         if (!fieldErrors.isEmpty()) {
             throw new InvalidSourceConfigException(fieldErrors);
         }
@@ -67,6 +70,7 @@ public class SourceConfigService {
         }
         collectDiscriminatorErrors(request.discriminator(), fieldErrors);
         collectSourceEventTypeErrors(request.sourceEventType(), request.discriminator(), fieldErrors);
+        collectTopicDiscriminatorConflictErrors(request.topic(), effectiveSourceEventType, request.discriminator(), fieldErrors);
         if (!fieldErrors.isEmpty()) {
             throw new InvalidSourceConfigException(fieldErrors);
         }
@@ -113,13 +117,56 @@ public class SourceConfigService {
 
         if (discriminator.source() == null) {
             fieldErrors.put("discriminator.source", "must not be blank");
+            return;
         }
 
-        if (discriminator.source() != null
-                && discriminator.source() != DiscriminatorSource.TOPIC
-                && (discriminator.key() == null || discriminator.key().isBlank())) {
+        if (discriminator.source() == DiscriminatorSource.TOPIC) {
+            if (discriminator.key() != null && !discriminator.key().isBlank()) {
+                fieldErrors.put("discriminator.key", "must be blank when source is 'topic'");
+            }
+        } else if (discriminator.key() == null || discriminator.key().isBlank()) {
             fieldErrors.put("discriminator.key", "must not be blank");
         }
+    }
+
+    // All configs on the same topic must use the same discriminator. The mapper picks any
+    // one of them to read the discriminator from and then looks up ConfigKey(topic, type) in
+    // O(1). If they disagreed, the lookup would silently miss records. We block the save
+    // here so the user gets a clear 400 instead of a quiet skip later.
+    private void collectTopicDiscriminatorConflictErrors(String topic,
+                                                         String sourceEventType,
+                                                         ConfigDiscriminator discriminator,
+                                                         Map<String, String> fieldErrors) {
+        if (topic == null || topic.isBlank() || discriminator == null || discriminator.source() == null) {
+            return;
+        }
+        if (fieldErrors.containsKey("discriminator.source") || fieldErrors.containsKey("discriminator.key")) {
+            return;
+        }
+
+        for (MappingConfig existing : cache.configsForTopic(topic)) {
+            if (existing.sourceEventType().equals(sourceEventType)) {
+                continue;
+            }
+            if (!Objects.equals(existing.discriminator(), discriminator)) {
+                fieldErrors.put("discriminator",
+                        "conflicts with config '" + existing.sourceEventType() + "' already on topic '" + topic
+                                + "'; existing config uses " + describe(existing.discriminator())
+                                + ", this uses " + describe(discriminator)
+                                + ". Update or remove the other config first.");
+                return;
+            }
+        }
+    }
+
+    private String describe(ConfigDiscriminator discriminator) {
+        if (discriminator == null || discriminator.source() == null) {
+            return "(none)";
+        }
+        if (discriminator.source() == DiscriminatorSource.TOPIC) {
+            return "topic";
+        }
+        return discriminator.source().wireValue() + ":" + discriminator.key();
     }
 
     private void collectSourceEventTypeErrors(String sourceEventType,

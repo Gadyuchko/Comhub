@@ -47,7 +47,8 @@ class MapperConfigReplayIntegrationTests {
 
         MappingConfig orderCreated = sampleConfig("orders.v1", "order-created", DiscriminatorSource.HEADER, "eventType");
         MappingConfig orderCancelled = sampleConfig("orders.v1", "order-cancelled", DiscriminatorSource.HEADER, "eventType");
-        MappingConfig returned = sampleConfig("orders.v1", "order-returned", DiscriminatorSource.PAYLOAD, "/type");
+        MappingConfig orderReturned = sampleConfig("orders.v1", "order-returned", DiscriminatorSource.HEADER, "eventType");
+        MappingConfig orderConflict = sampleConfig("orders.v1", "order-conflict", DiscriminatorSource.PAYLOAD, "/type");
         MappingConfig alertCreated = sampleConfig("alerts.v1", "alert-created", DiscriminatorSource.HEADER, "eventType");
 
         try (Producer<String, MappingConfig> producer = createProducer(broker.getBrokersAsString())) {
@@ -55,7 +56,8 @@ class MapperConfigReplayIntegrationTests {
             producer.send(new ProducerRecord<>(CONFIG_TOPIC, new ConfigKey("orders.v1", "order-cancelled").asRecordKey(), orderCancelled)).get();
             producer.send(new ProducerRecord<>(CONFIG_TOPIC, new ConfigKey("orders.v1", "order-cancelled").asRecordKey(), null)).get();
             producer.send(new ProducerRecord<>(CONFIG_TOPIC, "malformed-key", alertCreated)).get();
-            producer.send(new ProducerRecord<>(CONFIG_TOPIC, new ConfigKey("orders.v1", "order-returned").asRecordKey(), returned)).get();
+            producer.send(new ProducerRecord<>(CONFIG_TOPIC, new ConfigKey("orders.v1", "order-returned").asRecordKey(), orderReturned)).get();
+            producer.send(new ProducerRecord<>(CONFIG_TOPIC, new ConfigKey("orders.v1", "order-conflict").asRecordKey(), orderConflict)).get();
             producer.send(new ProducerRecord<>(CONFIG_TOPIC, new ConfigKey("alerts.v1", "alert-created").asRecordKey(), alertCreated)).get();
             producer.flush();
         }
@@ -98,9 +100,14 @@ class MapperConfigReplayIntegrationTests {
     }
 
     @Test
-    void replaySkipsMalformedRecordsAndAllowsDifferentDiscriminatorsPerTopic() {
+    void replaySkipsMalformedRecordsAndKeepsValidPeers() {
         assertThat(cache.get(new ConfigKey("orders.v1", "order-returned"))).isNotNull();
         assertThat(cache.size()).isEqualTo(3);
+    }
+
+    @Test
+    void replayRejectsConfigsWhoseDiscriminatorConflictsWithExistingPeers() {
+        assertThat(cache.get(new ConfigKey("orders.v1", "order-conflict"))).isNull();
     }
 
     @Test
