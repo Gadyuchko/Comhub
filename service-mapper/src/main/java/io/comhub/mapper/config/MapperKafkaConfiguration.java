@@ -18,38 +18,39 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
-import org.springframework.kafka.core.ConsumerFactory;
-import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
-import org.springframework.kafka.core.DefaultKafkaProducerFactory;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.core.ProducerFactory;
-import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.core.*;
 
 import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Spring wiring for the mapper service's Kafka connections.
+ * Spring wiring for the mapper's Kafka connections. This class only declares beans —
+ * it does not run consumers or producers itself.
  *
- * <p>The mapper has two different lanes. The config lane reads {@code MappingConfig}
- * records from the config topic and rebuilds local memory. If that local memory is
- * lost, the compacted Kafka topic can replay it again, so this lane does not need to
- * produce another record before it can move on.
+ * <p>The mapper has two lanes:
  *
- * <p>The source-event lane is different: every consumed source record must become
- * either a canonical event or a DLQ record. For that reason the source listener uses
- * manual acknowledgement. It waits until the downstream Kafka write succeeds, then
- * acknowledges the source record so the mapper consumer group can commit the offset.
- * This prevents the mapper from marking a source event as handled before the result
- * exists durably in Kafka.
+ * <p><b>Config lane.</b> Reads {@code MappingConfig} records from {@code comhub.config.v1}
+ * and rebuilds local memory. The {@code @KafkaListener} on {@code MappingConfigListener}
+ * uses {@link #configKafkaListenerContainerFactory} declared here. If local memory is
+ * ever lost, the compacted topic replays it; this lane does not produce records.
  *
- * <p>Source records are consumed as raw bytes. Successful records are parsed and
- * published as {@link CanonicalEvent}; failed records are sent to the DLQ as the
- * original bytes so the payload is not changed by JSON parsing or re-serialization.
+ * <p><b>Source-event lane.</b> Every consumed source record must become either a
+ * canonical event or a DLQ record. {@link io.comhub.mapper.kafka.SourceListenerManager}
+ * builds and starts a {@code ConcurrentMessageListenerContainer} per enabled source
+ * topic at runtime — this class only provides the {@link #sourceEventConsumerFactory}
+ * the manager uses. The manual-ack semantics live in the manager (it sets
+ * {@code AckMode.MANUAL_IMMEDIATE} on the container properties), so a source record is
+ * acked only after the canonical or DLQ write is durable.
  *
- * <p>{@link EnableKafka} is applied here because Spring Boot 4.x no longer
- * auto-configures Kafka infrastructure; {@code @KafkaListener} processing
- * must be enabled explicitly.
+ * <p>Source records are read as raw bytes. Successful records are parsed and published
+ * as {@link CanonicalEvent} via {@link #canonicalKafkaTemplate}; failed records are sent
+ * to the DLQ as the original bytes via {@link #dlqKafkaTemplate} so the payload is not
+ * changed by JSON parsing or re-serialization.
+ *
+ * <p>{@link EnableKafka} is applied here because Spring Boot 4.x no longer auto-configures
+ * Kafka infrastructure; {@code @KafkaListener} processing must be enabled explicitly. We
+ * still need it because the config lane uses {@code @KafkaListener}, even though source
+ * listeners are built directly without annotations.
  *
  * @author Roman Hadiuchko
  */
@@ -150,13 +151,4 @@ public class MapperKafkaConfiguration {
                 new ByteArrayDeserializer());
     }
 
-    @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, byte[]> sourceEventKafkaListenerContainerFactory(
-            ConsumerFactory<String, byte[]> sourceEventConsumerFactory) {
-        ConcurrentKafkaListenerContainerFactory<String, byte[]> factory =
-                new ConcurrentKafkaListenerContainerFactory<>();
-        factory.setConsumerFactory(sourceEventConsumerFactory);
-        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
-        return factory;
-    }
 }

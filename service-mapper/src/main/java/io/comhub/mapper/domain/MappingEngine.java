@@ -3,11 +3,7 @@ package io.comhub.mapper.domain;
 import com.fasterxml.jackson.core.JsonPointer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.NullNode;
-import io.comhub.common.config.AttributeMapping;
-import io.comhub.common.config.CanonicalFieldMapping;
-import io.comhub.common.config.CanonicalMapping;
-import io.comhub.common.config.ConfigDiscriminator;
-import io.comhub.common.config.MappingConfig;
+import io.comhub.common.config.*;
 import io.comhub.common.event.CanonicalEvent;
 import io.comhub.common.event.Severity;
 import io.comhub.common.json.JacksonSupport;
@@ -19,10 +15,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
-import java.util.LinkedHashMap;
-import java.util.Locale;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * Maps raw source-event JSON into the shared canonical event envelope.
@@ -67,6 +60,22 @@ public class MappingEngine {
         // Kafka record metadata is used later for source topic, partition, and offset.
         CanonicalMapping mapping = config.mapping();
 
+        List<String> errors = new ArrayList<>();
+
+        String occurredAtRaw = resolveText("occurred_at", mapping == null ? null : mapping.occurredAt(), payload, errors);
+        String severityRaw  = resolveText("severity", mapping == null ? null : mapping.severity(), payload, errors);
+
+        Instant occurredAt = parseInstant(occurredAtRaw, errors);
+        Severity severity  = parseSeverity(severityRaw, errors);
+
+        String category = resolveText("category", mapping == null ? null : mapping.category(), payload, errors);
+        String subject  = resolveText("subject", mapping == null ? null : mapping.subject(), payload, errors);
+        String message  = resolveText("message", mapping == null ? null : mapping.message(), payload, errors);
+
+        if (!errors.isEmpty()) {
+            throw new MappingFailureException(String.join(",", errors));
+        }
+
         return new CanonicalEvent(
                 UUID.randomUUID(),
                 source.topic(),
@@ -74,13 +83,13 @@ public class MappingEngine {
                 source.partition(),
                 source.offset(),
                 Instant.now(),
-                parseInstant(resolveText(mapping == null ? null : mapping.occurredAt(), payload)),
-                parseSeverity(resolveText(mapping == null ? null : mapping.severity(), payload)),
-                resolveText(mapping == null ? null : mapping.category(), payload),
+                occurredAt,
+                severity,
+                category,
                 null,
                 null,
-                resolveText(mapping == null ? null : mapping.subject(), payload),
-                resolveText(mapping == null ? null : mapping.message(), payload),
+                subject,
+                message,
                 resolveAttributes(mapping, payload),
                 rawPayload(source.value())
         );
@@ -161,7 +170,7 @@ public class MappingEngine {
         return value.asText();
     }
 
-    private String resolveText(CanonicalFieldMapping fieldMapping, JsonNode payload) {
+    private String resolveText(String fieldName, CanonicalFieldMapping fieldMapping, JsonNode payload, List<String> errors) {
         if (fieldMapping == null || isBlank(fieldMapping.source())) {
             return null;
         }
@@ -170,7 +179,11 @@ public class MappingEngine {
         if (value.isMissingNode() || value.isNull()) {
             return null;
         }
-        return value.isTextual() ? value.asText() : value.asText(null);
+        if (!value.isTextual()) {
+            errors.add(fieldName + "_not_textual");
+            return null;
+        }
+        return value.asText();
     }
 
     private Map<String, String> resolveAttributes(CanonicalMapping mapping, JsonNode payload) {
@@ -192,26 +205,26 @@ public class MappingEngine {
         return attributes;
     }
 
-    private Severity parseSeverity(String value) {
+    private Severity parseSeverity(String value, List<String> errors) {
         if (isBlank(value)) {
             return null;
         }
-
         try {
             return Severity.valueOf(value.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
+            errors.add("severity_parse_error");
             return null;
         }
     }
 
-    private Instant parseInstant(String value) {
+    private Instant parseInstant(String value, List<String> errors) {
         if (isBlank(value)) {
             return null;
         }
-
         try {
             return Instant.parse(value);
         } catch (DateTimeParseException e) {
+            errors.add("occurred_at_parse_error");
             return null;
         }
     }

@@ -162,4 +162,12 @@ public final class ConfigReplayCoordinator {
     public boolean awaitEndOfReplay(Duration timeout) throws InterruptedException {
         return latch.await(timeout.toMillis(), TimeUnit.MILLISECONDS);
     }
+
+    /**
+     * Simple helper for downstream Listeners to check if replay is complete to avoid failed event handling.
+     * @return
+     */
+    public boolean isReplayComplete() {
+        return latch.getCount() == 0;
+    }
 }

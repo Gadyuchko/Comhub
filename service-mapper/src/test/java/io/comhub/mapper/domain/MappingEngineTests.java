@@ -97,6 +97,79 @@ class MappingEngineTests {
                 .isEqualTo("payload_parse_error");
     }
 
+    @Test
+    void failsOnInvalidSeverityValue() {
+        MappingConfig config = sampleConfig(new ConfigDiscriminator(DiscriminatorSource.PAYLOAD, "/type"));
+        ConsumerRecord<String, byte[]> source = sourceRecord("""
+                {"type":"payment.failed","severity":"NOT_A_REAL_SEVERITY"}
+                """);
+
+        assertThatThrownBy(() -> mappingEngine.map(config, source))
+                .isInstanceOf(MappingFailureException.class)
+                .extracting("reason")
+                .isEqualTo("severity_parse_error");
+    }
+
+    @Test
+    void failsOnInvalidOccurredAt() {
+        MappingConfig config = sampleConfig(new ConfigDiscriminator(DiscriminatorSource.PAYLOAD, "/type"));
+        ConsumerRecord<String, byte[]> source = sourceRecord("""
+                {"type":"payment.failed","occurredAt":"not-a-timestamp"}
+                """);
+
+        assertThatThrownBy(() -> mappingEngine.map(config, source))
+                .isInstanceOf(MappingFailureException.class)
+                .extracting("reason")
+                .isEqualTo("occurred_at_parse_error");
+    }
+
+    @Test
+    void accumulatesAllParseErrorsIntoOneException() {
+        MappingConfig config = sampleConfig(new ConfigDiscriminator(DiscriminatorSource.PAYLOAD, "/type"));
+        ConsumerRecord<String, byte[]> source = sourceRecord("""
+                {"type":"payment.failed","severity":"BAD","occurredAt":"BAD"}
+                """);
+
+        assertThatThrownBy(() -> mappingEngine.map(config, source))
+                .isInstanceOf(MappingFailureException.class)
+                .satisfies(thrown -> {
+                    String reason = ((MappingFailureException) thrown).reason();
+                    assertThat(reason).contains("severity_parse_error");
+                    assertThat(reason).contains("occurred_at_parse_error");
+                    assertThat(reason).contains(",");
+                });
+    }
+
+    @Test
+    void failsWhenFieldValueIsNotTextual() {
+        MappingConfig config = sampleConfig(new ConfigDiscriminator(DiscriminatorSource.PAYLOAD, "/type"));
+        ConsumerRecord<String, byte[]> source = sourceRecord("""
+                {"type":"payment.failed","severity":42}
+                """);
+
+        assertThatThrownBy(() -> mappingEngine.map(config, source))
+                .isInstanceOf(MappingFailureException.class)
+                .extracting("reason")
+                .isEqualTo("severity_not_textual");
+    }
+
+    @Test
+    void acceptsMissingOptionalFields() {
+        MappingConfig config = sampleConfig(new ConfigDiscriminator(DiscriminatorSource.PAYLOAD, "/type"));
+        ConsumerRecord<String, byte[]> source = sourceRecord("""
+                {"type":"payment.failed"}
+                """);
+
+        CanonicalEvent event = mappingEngine.map(config, source);
+
+        assertThat(event.sourceEventType()).isEqualTo("payment.failed");
+        assertThat(event.occurredAt()).isNull();
+        assertThat(event.severity()).isNull();
+        assertThat(event.category()).isNull();
+        assertThat(event.subject()).isNull();
+        assertThat(event.message()).isNull();
+    }
+
     private MappingConfig sampleConfig(ConfigDiscriminator discriminator) {
         return sampleConfig("payment.failed", discriminator);
     }

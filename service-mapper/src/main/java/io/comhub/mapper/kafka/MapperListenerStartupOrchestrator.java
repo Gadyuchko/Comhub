@@ -4,20 +4,25 @@ import io.comhub.common.config.ConfigCache;
 import io.comhub.common.config.ConfigReplayCoordinator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+
 /**
- * Fails service startup if config replay does not reach end-of-topic within the
- * configured timeout. Runs after all listener containers have started; by that
- * time the config listener is polling and the coordinator's latch will count
- * down on its own. If the latch doesn't release in time, we throw to abort the
- * Spring Boot startup — no snapshot fallback, visible failure per the story's
- * Kafka-unavailable acceptance criterion.
+ * Brings the mapper to its initial steady state after Spring context startup.
+ *
+ * <p>Waits on {@link ConfigReplayCoordinator#awaitEndOfReplay} until the config topic has
+ * been fully replayed into the cache, or the configured timeout elapses. On timeout the
+ * orchestrator throws to abort Spring Boot startup — there is no snapshot fallback, the
+ * failure is visible.
+ *
+ * <p>Once replay completes successfully, calls {@link SourceListenerManager#reconcileAll()}
+ * to build and start a Kafka consumer container for every enabled source topic in the
+ * cache. From that point, {@code MappingConfigListener} drives per-record reconciliation
+ * for any live config changes that follow.
  *
  * @author Roman Hadiuchko
  */
@@ -29,26 +34,29 @@ public final class MapperListenerStartupOrchestrator implements ApplicationRunne
     private final ConfigReplayCoordinator coordinator;
     private final ConfigCache cache;
     private final Duration startupTimeout;
+    private final SourceListenerManager sourceListenerManager;
 
     public MapperListenerStartupOrchestrator(ConfigReplayCoordinator coordinator,
                                              ConfigCache cache,
                                              @Value("${kafka.config-replay.startup-timeout:30s}")
-                                             Duration startupTimeout) {
+                                             Duration startupTimeout,
+                                             SourceListenerManager sourceListenerManager) {
         this.coordinator = coordinator;
         this.cache = cache;
         this.startupTimeout = startupTimeout;
+        this.sourceListenerManager = sourceListenerManager;
     }
 
     @Override
     public void run(ApplicationArguments args) throws Exception {
         boolean synced = coordinator.awaitEndOfReplay(startupTimeout);
-        if (synced) {
-            log.info("Config replay completed; cache holds {} mapping(s).", cache.size());
-            return;
+        if (!synced) {
+            log.error("Config replay did not complete within {} — aborting startup.", startupTimeout);
+            throw new IllegalStateException(
+                    "Config replay did not complete within " + startupTimeout + "; aborting startup.");
         }
-        log.error("Config replay did not complete within {} — aborting startup.", startupTimeout);
-        throw new IllegalStateException(
-                "Config replay did not complete within " + startupTimeout + "; aborting startup.");
+        log.info("Config replay completed; cache holds {} mapping(s). Starting containers for sourceEvent listeners.", cache.size());
+        sourceListenerManager.reconcileAll();
     }
 }
 
