@@ -71,6 +71,7 @@ public class MappingEngine {
         String category = resolveText("category", mapping == null ? null : mapping.category(), payload, errors);
         String subject  = resolveText("subject", mapping == null ? null : mapping.subject(), payload, errors);
         String message  = resolveText("message", mapping == null ? null : mapping.message(), payload, errors);
+        Map<String, String> attributes = resolveAttributes(mapping, payload, errors);
 
         if (!errors.isEmpty()) {
             throw new MappingFailureException(String.join(",", errors));
@@ -90,7 +91,7 @@ public class MappingEngine {
                 null,
                 subject,
                 message,
-                resolveAttributes(mapping, payload),
+                attributes,
                 rawPayload(source.value())
         );
     }
@@ -163,7 +164,7 @@ public class MappingEngine {
     }
 
     private String resolveRequiredText(String pointer, JsonNode payload) {
-        JsonNode value = payload.at(JsonPointer.compile(pointer));
+        JsonNode value = payload.at(compilePointer(pointer, "discriminator_extraction_failed"));
         if (value.isMissingNode() || value.isNull() || !value.isTextual()) {
             throw new MappingFailureException("discriminator_extraction_failed");
         }
@@ -175,7 +176,12 @@ public class MappingEngine {
             return null;
         }
 
-        JsonNode value = payload.at(JsonPointer.compile(fieldMapping.source()));
+        JsonPointer pointer = compilePointer(fieldMapping.source(), fieldName + "_invalid_pointer", errors);
+        if (pointer == null) {
+            return null;
+        }
+
+        JsonNode value = payload.at(pointer);
         if (value.isMissingNode() || value.isNull()) {
             return null;
         }
@@ -186,7 +192,7 @@ public class MappingEngine {
         return value.asText();
     }
 
-    private Map<String, String> resolveAttributes(CanonicalMapping mapping, JsonNode payload) {
+    private Map<String, String> resolveAttributes(CanonicalMapping mapping, JsonNode payload, List<String> errors) {
         if (mapping == null) {
             return Map.of();
         }
@@ -197,7 +203,12 @@ public class MappingEngine {
                 continue;
             }
 
-            JsonNode value = payload.at(JsonPointer.compile(attribute.source()));
+            JsonPointer pointer = compilePointer(attribute.source(), "attribute_invalid_pointer", errors);
+            if (pointer == null) {
+                continue;
+            }
+
+            JsonNode value = payload.at(pointer);
             if (!value.isMissingNode() && !value.isNull() && value.isTextual() && !isBlank(value.asText())) {
                 attributes.put(attribute.targetAttribute(), value.asText());
             }
@@ -225,6 +236,23 @@ public class MappingEngine {
             return Instant.parse(value);
         } catch (DateTimeParseException e) {
             errors.add("occurred_at_parse_error");
+            return null;
+        }
+    }
+
+    private JsonPointer compilePointer(String pointer, String reason) {
+        try {
+            return JsonPointer.compile(pointer);
+        } catch (IllegalArgumentException e) {
+            throw new MappingFailureException(reason, e);
+        }
+    }
+
+    private JsonPointer compilePointer(String pointer, String reason, List<String> errors) {
+        try {
+            return JsonPointer.compile(pointer);
+        } catch (IllegalArgumentException e) {
+            errors.add(reason);
             return null;
         }
     }

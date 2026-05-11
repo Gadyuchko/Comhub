@@ -170,6 +170,71 @@ class MappingEngineTests {
         assertThat(event.message()).isNull();
     }
 
+    @Test
+    void failsWithDiscriminatorReasonWhenDiscriminatorPointerIsInvalid() {
+        MappingConfig config = sampleConfig(new ConfigDiscriminator(DiscriminatorSource.PAYLOAD, "type"));
+        ConsumerRecord<String, byte[]> source = sourceRecord("""
+                {"type":"payment.failed"}
+                """);
+
+        assertThatThrownBy(() -> mappingEngine.prepare(config, source))
+                .isInstanceOf(MappingFailureException.class)
+                .extracting("reason")
+                .isEqualTo("discriminator_extraction_failed");
+    }
+
+    @Test
+    void failsWithFieldReasonWhenCanonicalPointerIsInvalid() {
+        MappingConfig config = new MappingConfig(
+                "orders.events.v1",
+                "payment.failed",
+                true,
+                2,
+                new ConfigDiscriminator(DiscriminatorSource.PAYLOAD, "/type"),
+                new CanonicalMapping(
+                        new CanonicalFieldMapping("/occurredAt"),
+                        new CanonicalFieldMapping("severity"),
+                        new CanonicalFieldMapping("/category"),
+                        new CanonicalFieldMapping("/subject"),
+                        new CanonicalFieldMapping("/message"),
+                        List.of()),
+                new OperationsConfig(List.of(), List.of(), List.of()));
+        ConsumerRecord<String, byte[]> source = sourceRecord("""
+                {"type":"payment.failed","severity":"error"}
+                """);
+
+        assertThatThrownBy(() -> mappingEngine.map(config, source))
+                .isInstanceOf(MappingFailureException.class)
+                .extracting("reason")
+                .isEqualTo("severity_invalid_pointer");
+    }
+
+    @Test
+    void failsWithAttributeReasonWhenAttributePointerIsInvalid() {
+        MappingConfig config = new MappingConfig(
+                "orders.events.v1",
+                "payment.failed",
+                true,
+                2,
+                new ConfigDiscriminator(DiscriminatorSource.PAYLOAD, "/type"),
+                new CanonicalMapping(
+                        new CanonicalFieldMapping("/occurredAt"),
+                        new CanonicalFieldMapping("/severity"),
+                        new CanonicalFieldMapping("/category"),
+                        new CanonicalFieldMapping("/subject"),
+                        new CanonicalFieldMapping("/message"),
+                        List.of(new AttributeMapping("customerId", "payload/customerId"))),
+                new OperationsConfig(List.of(), List.of(), List.of()));
+        ConsumerRecord<String, byte[]> source = sourceRecord("""
+                {"type":"payment.failed","payload":{"customerId":"cust-123"}}
+                """);
+
+        assertThatThrownBy(() -> mappingEngine.map(config, source))
+                .isInstanceOf(MappingFailureException.class)
+                .extracting("reason")
+                .isEqualTo("attribute_invalid_pointer");
+    }
+
     private MappingConfig sampleConfig(ConfigDiscriminator discriminator) {
         return sampleConfig("payment.failed", discriminator);
     }
